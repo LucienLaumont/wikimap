@@ -433,7 +433,9 @@
   }
   function selectGroup(gid, fly) {
     selected = -1; selGroup = gid; dirty = true;
-    const g = GR[gid], links = Object.entries(g.links);
+    // groupes liés, du plus relié au moins relié : les clés de g.links sont des numéros de groupe,
+    // que JavaScript range toujours par ordre croissant, d'où le tri explicite
+    const g = GR[gid], links = Object.entries(g.links).sort((a, b) => b[1] - a[1]);
     setDetailGroup(gid);
     $('g-dot').style.background = groupCol[gid];
     $('g-kind').textContent = g.size < SMALL ? 'Fiche petit groupe' : 'Fiche groupe';
