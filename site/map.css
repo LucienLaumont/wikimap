@@ -268,7 +268,19 @@ dialog h2 { margin: 0 0 16px; padding: 0 36px 14px 0; border-bottom: 1px solid v
   .fr { display: none; }
   #controls { top: 12px; left: 12px; width: calc(100% - 24px); max-height: 60%; }
   #controls.collapsed { width: auto; }
-  #detail { top: auto; bottom: 0; right: 0; width: 100%; max-height: 62%; border-width: 1px 0 0; box-shadow: 0 -10px 30px var(--shadow); }
+  /* tiroir : toute la hauteur de la zone carte, décalé vers le bas par map.js (transform) ; la fiche
+     entière défile d'un bloc, sans liste qui défile à part */
+  #detail { top: 0; bottom: 0; right: 0; width: 100%; max-height: none; border-width: 1px 0 0; box-shadow: 0 -10px 30px var(--shadow);
+    transform: translateY(100%); will-change: transform; }
+  #detail > div:not([hidden]) { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding-bottom: env(safe-area-inset-bottom, 0px); }
+  #detail .body { overflow: visible; }
+  /* l'en-tête (poignée, « Fiche carte », Lien, ✕) reste en haut : le contenu défile dessous */
+  #detail .hd { position: sticky; top: 0; z-index: 1; background: var(--sf); height: 46px; padding-top: 6px; box-sizing: border-box; }
+  #detail::before { z-index: 2; }
+  #share, #close { z-index: 2; }
+  #share { top: 13px; }
+  #close { top: 12px; }
+  .app.sheet-open .footbar { display: none; }
   #detail .tk.c, #detail .tk.d { display: none; }
   #detail::before { content: ""; position: absolute; top: 5px; left: 50%; width: 40px; height: 3px; margin-left: -20px; background: var(--line2); }
   #detail:not([hidden]) ~ .zoom { display: none; }

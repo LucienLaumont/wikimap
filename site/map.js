@@ -399,7 +399,69 @@
     + '<path transform="translate(12 12.3) scale(.74) translate(-12 -12)" d="M4.4 7.3h2.3l2.6 10.1h-0.9z M13.8 7.3h1l-5.5 10.1h-0.8z '
     + 'M9.4 7.3h2.3l3.7 10.1h-0.9z M18.8 7.3h1l-4.4 10.1h-0.8z M3.3 6.6h4.5v0.8h-4.5z M8.4 6.6h4.2v0.8h-4.2z M13 6.6h2.6v0.8h-2.6z M18 6.6h2.6v0.8h-2.6z"/></svg>';
 
-  function clearSel() { selected = -1; selGroup = -1; $('detail').hidden = true; setHash(''); dirty = true; }
+  function clearSel() { selected = -1; selGroup = -1; $('detail').hidden = true; sheetClosed(); setHash(''); dirty = true; }
+
+  // ---- fiche : panneau à droite sur grand écran ; sur téléphone, tiroir à trois crans (bas : le
+  // titre seul, milieu : à l'ouverture, haut : plein écran) qu'on fait glisser. Toute la fiche
+  // défile d'un bloc ; tant qu'elle n'est pas en haut, glisser vers le haut la monte d'abord, et
+  // glisser vers le bas la redescend quand son contenu est revenu au début.
+  const sheet = $('detail'), phone = matchMedia(`(max-width: ${NARROW}px)`);
+  let sheetY = 0, sd = null;
+  const scroller = () => sheet.querySelector(':scope > div:not([hidden])');
+  function snaps() { const h = sheet.parentElement.clientHeight; return { full: 0, half: Math.round(h * 0.42), peek: Math.max(0, h - 148), h }; }
+  function setSheet(y, animate) {
+    sheetY = y; sheet.style.transition = animate ? 'transform 0.28s cubic-bezier(.2,.8,.2,1)' : 'none';
+    sheet.style.transform = `translateY(${y}px)`;
+  }
+  function showDetail(id) {
+    const wasOpen = !sheet.hidden;
+    $('detail-card').hidden = id !== 'detail-card'; $('detail-group').hidden = id !== 'detail-group'; sheet.hidden = false;
+    scroller().scrollTop = 0;
+    if (!phone.matches) { sheet.style.transform = ''; sheet.style.transition = ''; return; }
+    document.querySelector('.app').classList.add('sheet-open'); // pied de page masqué : plus de place
+    if (!wasOpen) { const s = snaps(); setSheet(s.h, false); requestAnimationFrame(() => requestAnimationFrame(() => setSheet(s.half, true))); }
+  }
+  function sheetClosed() { document.querySelector('.app').classList.remove('sheet-open'); sheet.style.transform = ''; sheet.style.transition = ''; }
+  sheet.addEventListener('touchstart', (e) => {
+    if (!phone.matches || e.touches.length > 1) return;
+    const y = e.touches[0].clientY;
+    sd = { y0: y, s0: sheetY, mode: null, y1: y, t1: performance.now(), v: 0 };
+  }, { passive: true });
+  sheet.addEventListener('touchmove', (e) => {
+    if (!sd) return;
+    const y = e.touches[0].clientY, dy = y - sd.y0, s = snaps();
+    if (!sd.mode) {
+      if (Math.abs(dy) < 5) return;
+      // en haut : le contenu défile, sauf si l'on tire vers le bas depuis le début de la fiche
+      sd.mode = sheetY <= s.full + 1 && (dy < 0 || scroller().scrollTop > 0) ? 'scroll' : 'sheet';
+    }
+    if (sd.mode !== 'sheet') return;
+    e.preventDefault();
+    const now = performance.now();
+    sd.v = (y - sd.y1) / Math.max(1, now - sd.t1); sd.y1 = y; sd.t1 = now;
+    setSheet(Math.min(s.h - 56, Math.max(s.full, sd.s0 + dy)), false);
+  }, { passive: false });
+  const endDrag = () => {
+    if (!sd) return;
+    const d = sd; sd = null;
+    if (d.mode !== 'sheet') return;
+    const s = snaps();
+    if (sheetY > s.peek + 24 && d.v >= 0) { clearSel(); return; } // tirée sous le cran du bas : fermée
+    const stops = [s.full, s.half, s.peek];
+    let target = stops.reduce((a, b) => (Math.abs(b - sheetY) < Math.abs(a - sheetY) ? b : a));
+    if (Math.abs(d.v) > 0.5) target = d.v < 0 ? stops.filter((p) => p < sheetY).pop() ?? s.full : stops.find((p) => p > sheetY) ?? s.peek; // geste rapide : cran suivant
+    setSheet(target, true);
+  };
+  sheet.addEventListener('touchend', endDrag);
+  sheet.addEventListener('touchcancel', endDrag);
+  // rotation, clavier, passage en grand écran : on se recale sur le cran le plus proche
+  new ResizeObserver(() => {
+    if (sheet.hidden) return;
+    if (!phone.matches) { sheetClosed(); return; }
+    document.querySelector('.app').classList.add('sheet-open');
+    const s = snaps(), stops = [s.full, s.half, s.peek];
+    setSheet(stops.reduce((a, b) => (Math.abs(b - sheetY) < Math.abs(a - sheetY) ? b : a)), false);
+  }).observe($('stage'));
   function selectCard(i, fly) {
     selected = i; selGroup = -1; dirty = true;
     const n = N[i], g = GR[n.group];
@@ -427,7 +489,7 @@
     if (!adj[i].length) emptyItem(ul, 'Aucun lien assez fort.');
     $('nb-title').textContent = 'Achetées par les mêmes joueurs';
     $('nb-count').textContent = adj[i].length || '';
-    $('detail-group').hidden = true; $('detail-card').hidden = false; $('detail').hidden = false;
+    showDetail('detail-card');
     setHash('carte=' + slug(n.label));
     if (fly) flyTo(n);
   }
@@ -462,7 +524,7 @@
       const li = listItem(rarTag(N[i].rarity), N[i].label, '', () => selectCard(i, true), Math.max(1, Math.round(N[i].strength / stMax * 5)));
       li.title = `${N[i].label} · ${fmt.format(N[i].buyers)} acheteurs`; uc.append(li);
     }
-    $('detail-card').hidden = true; $('detail-group').hidden = false; $('detail').hidden = false;
+    showDetail('detail-group');
     setHash('groupe=' + (g.name ? slug(g.name) : g.id));
     if (fly) flyToGroup(g);
   }
