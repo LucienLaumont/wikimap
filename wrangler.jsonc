@@ -1,0 +1,9 @@
+// Cloudflare : le site statique de site/ (données comprises) publié comme Worker à ressources statiques.
+// Publication depuis la racine : npx wrangler deploy
+{
+  "name": "wikimap",
+  "compatibility_date": "2026-09-27",
+  "assets": {
+    "directory": "./site"
+  }
+}

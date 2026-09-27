@@ -82,6 +82,15 @@ python -m http.server 8000 --directory site
 
 puis ouvrir http://localhost:8000.
 
+## Publier
+
+Le site est publié sur Cloudflare (Worker à ressources statiques, voir `wrangler.jsonc`), depuis la
+racine, une fois `site/data/graph.json` généré :
+
+```sh
+npx wrangler deploy
+```
+
 ## Licence
 
 Code sous licence [MIT](LICENSE).
