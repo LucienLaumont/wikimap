@@ -412,10 +412,12 @@
     gb.querySelector('.m').textContent = `${fmt.format(g.size)} cartes`;
     gb.setAttribute('aria-label', `Voir le groupe ${groupName(g)}, ${fmt.format(g.size)} cartes`);
     gb.onclick = () => selectGroup(g.id, true);
-    // voisines, plus fort lien d'abord ; la force est rendue en 5 cases, relative à la plus forte
+    // voisines, de la plus partagée à la moins partagée (acheteurs en commun, le nombre affiché ;
+    // à égalité, la force du lien) ; rendu en 5 cases, relatif à la plus partagée
     const ul = $('nb'); ul.textContent = '';
-    const coMax = Math.max(1, ...adj[i].map((a) => a[2]));
-    for (const [j, , co] of adj[i]) ul.append(listItem(rarTag(N[j].rarity), N[j].label, `${co} en commun`, () => selectCard(j, true), Math.max(1, Math.round(co / coMax * 5))));
+    const nb = adj[i].slice().sort((a, b) => b[2] - a[2] || b[1] - a[1]);
+    const coMax = Math.max(1, ...nb.map((a) => a[2]));
+    for (const [j, , co] of nb) ul.append(listItem(rarTag(N[j].rarity), N[j].label, `${co} en commun`, () => selectCard(j, true), Math.max(1, Math.round(co / coMax * 5))));
     if (!adj[i].length) emptyItem(ul, 'Aucun lien assez fort.');
     $('nb-title').textContent = 'Achetées par les mêmes joueurs';
     $('nb-count').textContent = adj[i].length || '';
