@@ -1,5 +1,6 @@
 // Cloudflare : le site statique de site/ (données comprises) et un petit Worker pour le compteur de
-// visites (/api/*), qui garde un seul nombre dans une base D1. Publication depuis la racine :
+// visites (/api/*), qui garde un seul nombre dans une base D1. Le Worker passe en premier sur toutes
+// les adresses : il pose le mot de passe de l'aperçu privé (voir worker/index.js). Publication :
 //   npx wrangler deploy
 {
   "name": "wikimap",
@@ -8,7 +9,7 @@
   "assets": {
     "directory": "./site",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": true
   },
   "d1_databases": [
     {
