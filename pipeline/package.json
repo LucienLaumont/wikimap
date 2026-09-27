@@ -1,0 +1,11 @@
+{
+  "name": "wikimap-pipeline",
+  "private": true,
+  "description": "WikiMap : disposition du graphe des cartes (ForceAtlas2).",
+  "type": "module",
+  "dependencies": {
+    "graphology": "^0.26.0",
+    "graphology-layout-forceatlas2": "^0.10.1",
+    "graphology-layout-noverlap": "^0.4.2"
+  }
+}

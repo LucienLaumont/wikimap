@@ -1,0 +1,4 @@
+duckdb
+networkx
+numpy
+scipy

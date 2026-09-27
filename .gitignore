@@ -1,0 +1,9 @@
+# Données locales : identifiants de joueurs, comptes écartés, exports bruts. Jamais versionnées.
+data/
+# Généré par le pipeline (publié avec le site, pas versionné)
+site/data/
+pipeline/node_modules/
+__pycache__/
+*.pyc
+.env
+.wrangler/

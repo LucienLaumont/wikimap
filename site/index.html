@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>WikiMap</title>
+<meta name="description" content="WikiMap : la carte des enchères de WikiMasters. Les cartes que les mêmes collectionneurs achètent, regroupées par affinité.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400&family=Sora:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="map.css">
+
+<div class="app">
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="WikiMap, retour à la vue d'ensemble" id="brand">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="1.5" y="1.5" width="21" height="21" />
+        <path d="M6 17 L11 7 L18 11 L14 18 Z" />
+        <circle cx="6" cy="17" r="1.6" /><circle cx="11" cy="7" r="2" /><circle cx="18" cy="11" r="1.3" /><circle cx="14" cy="18" r="1.5" />
+      </svg>
+      <span class="brand-name">WikiMap</span>
+    </a>
+    <span class="brand-sub cap">Carte des enchères · WikiMasters</span>
+    <div class="search">
+      <div class="search-box cham">
+        <label class="sr-only" for="q">Chercher une carte ou un groupe</label>
+        <svg class="search-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="M13 13 L17.5 17.5" /></svg>
+        <input id="q" type="search" autocomplete="off" placeholder="Carte ou groupe : Kaamelott, Marvel…" role="combobox" aria-expanded="false" aria-controls="sugg">
+      </div>
+      <ul id="sugg" role="listbox" hidden></ul>
+    </div>
+    <button class="btn cham btn-theme" id="theme" type="button" aria-label="Passer en thème sombre">
+      <svg class="i-moon" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.5 12.5 A6.5 6.5 0 0 1 7.5 4.5 A6.5 6.5 0 1 0 15.5 12.5 Z" /></svg>
+      <svg class="i-sun" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3.5" /><path d="M10 1.5 V4 M10 16 V18.5 M1.5 10 H4 M16 10 H18.5 M4 4 L5.8 5.8 M14.2 14.2 L16 16 M4 16 L5.8 14.2 M14.2 5.8 L16 4" /></svg>
+    </button>
+    <button class="btn cham btn-help" type="button" data-open="dlg-read">
+      <span class="q-mark" aria-hidden="true">?</span><span class="btn-label">Lire la carte</span>
+    </button>
+  </header>
+
+  <main class="stage" id="stage">
+    <canvas id="map" aria-label="Carte des cartes achetées ensemble par les mêmes collectionneurs"></canvas>
+    <div id="status">Chargement de la carte…</div>
+    <i class="fr tl" aria-hidden="true"></i><i class="fr tr" aria-hidden="true"></i><i class="fr bl" aria-hidden="true"></i><i class="fr br" aria-hidden="true"></i>
+
+    <section id="controls" class="panel" aria-label="Filtres de la carte">
+      <i class="tk a"></i><i class="tk b"></i><i class="tk c"></i><i class="tk d"></i>
+      <div class="hd">
+        <span class="cap strong">Filtres</span>
+        <span class="hd-right"><span class="cap" id="ctl-sum"></span><button class="x" id="ctl-toggle" type="button" aria-expanded="true" aria-controls="ctl-body" aria-label="Replier les filtres">−</button></span>
+      </div>
+      <div id="ctl-body">
+        <div class="sec">
+          <span class="cap">Couleur</span>
+          <div class="seg" id="color-mode">
+            <button type="button" data-v="group" aria-pressed="true">Groupe</button>
+            <button type="button" data-v="rarity" aria-pressed="false">Rareté</button>
+          </div>
+          <p class="hint" id="color-hint"></p>
+        </div>
+        <div class="sec" id="layout-box" hidden>
+          <span class="cap">Disposition</span>
+          <div class="seg" id="layout-mode"></div>
+          <p class="hint">« Serrée » et « Très serrée » tiennent ensemble les cartes d'un même groupe. « Liens seuls » les place d'après leurs liens uniquement : certains groupes s'y coupent en morceaux.</p>
+        </div>
+        <div class="sec sec-tight">
+          <div class="sec-head"><span class="cap">Rareté</span><span class="cap dim" id="rar-count"></span></div>
+          <div id="legend"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="detail" class="panel" hidden aria-live="polite">
+      <i class="tk a"></i><i class="tk b"></i><i class="tk c"></i><i class="tk d"></i>
+      <div id="detail-card" hidden>
+        <div class="hd"><span class="cap strong">Fiche carte</span></div>
+        <div class="gstrip"></div>
+        <header class="sec">
+          <div class="head-row"><span class="rt lg" id="d-rar"></span><a class="btn chs btn-sm" id="d-wiki" target="_blank" rel="noopener">Wikipédia ↗</a></div>
+          <h2 id="d-title"></h2>
+          <p class="cat" id="d-cat"></p>
+        </header>
+        <dl class="kpi">
+          <div><dt class="cap">Acheteurs</dt><dd id="d-buyers"></dd></div>
+          <div><dt class="cap">Ventes</dt><dd id="d-sales"></dd></div>
+          <div><dt class="cap">Prix médian</dt><dd id="d-price"></dd></div>
+        </dl>
+        <div class="sec"><button class="grp-btn chs" id="d-group" type="button"><span class="gdot"></span><span class="t"></span><span class="m cap"></span><span class="arr" aria-hidden="true">→</span></button></div>
+        <div class="body">
+          <p class="list-title"><span class="cap" id="nb-title"></span><span class="cap num" id="nb-count"></span></p>
+          <ul class="list" id="nb"></ul>
+        </div>
+      </div>
+      <div id="detail-group" hidden>
+        <div class="hd"><span class="cap strong" id="g-kind">Fiche groupe</span></div>
+        <div class="gstrip"></div>
+        <header class="sec">
+          <div class="head-row"><span class="gdot" id="g-dot"></span><span class="cap">Groupe</span></div>
+          <h2 id="g-title"></h2>
+          <p class="cat" id="g-sub"></p>
+        </header>
+        <dl class="kpi">
+          <div><dt class="cap">Cartes</dt><dd id="g-size"></dd></div>
+          <div><dt class="cap">Liens sortants</dt><dd id="g-out"></dd></div>
+          <div><dt class="cap">Groupes liés</dt><dd id="g-nlinked"></dd></div>
+        </dl>
+        <div class="sec"><div class="rbar" id="g-rbar" title="Répartition par rareté"></div></div>
+        <div class="body">
+          <p class="list-title"><span class="cap">Groupes liés</span><span class="cap">liens</span></p>
+          <ul class="list" id="g-linked"></ul>
+          <p class="list-title"><span class="cap">Cartes les plus centrales</span><span class="cap">acheteurs</span></p>
+          <ul class="list" id="g-cards"></ul>
+        </div>
+      </div>
+      <button id="close" class="x" type="button" aria-label="Fermer">✕</button>
+    </section>
+
+    <div class="zoom" aria-label="Zoom">
+      <button type="button" id="zoom-in" aria-label="Zoomer">+</button>
+      <button type="button" id="zoom-out" aria-label="Dézoomer">−</button>
+      <button type="button" id="zoom-fit" aria-label="Vue d'ensemble"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 7 V3 H7 M13 3 H17 V7 M17 13 V17 H13 M7 17 H3 V13" /></svg></button>
+    </div>
+  </main>
+
+  <footer class="footbar">
+    <div class="stats" id="foot-data"><span class="cap">Chargement des données…</span></div>
+    <nav class="foot-links" aria-label="À propos">
+      <button type="button" class="link" data-open="dlg-method">Méthode</button>
+      <span class="cap indep">Non affilié à WikiMasters</span>
+      <a href="https://www.wiki-masters.com" target="_blank" rel="noopener">wiki-masters.com ↗</a>
+    </nav>
+  </footer>
+</div>
+
+<dialog id="dlg-read" aria-labelledby="dlg-read-title">
+  <button type="button" class="dlg-close x" aria-label="Fermer">✕</button>
+  <h2 id="dlg-read-title">Comment lire la carte</h2>
+  <ul class="read-list">
+    <li><span class="glyph"><i class="g-dot"></i></span><div><b>Un point, c'est une carte</b> du jeu, achetée aux enchères par au moins 75 collectionneurs différents.</div></li>
+    <li><span class="glyph"><i class="g-dot a"></i><i class="g-line"></i><i class="g-dot b"></i></span><div><b>Un lien relie deux cartes</b> achetées par les mêmes joueurs : au moins 10 collectionneurs en commun. Entre deux groupes, le lien passe de la couleur de l'un à celle de l'autre.</div></li>
+    <li><span class="glyph"><i class="g-dot small"></i><i class="g-dot big"></i></span><div><b>Plus le point est gros</b>, plus la carte est au cœur de son groupe : elle a beaucoup de liens forts.</div></li>
+    <li><span class="glyph"><i class="g-dot c1"></i><i class="g-dot c2"></i><i class="g-dot c3"></i></span><div><b>Une couleur, c'est un groupe</b> de cartes souvent collectionnées ensemble : une série, un sport, un parti… En zoomant, l'anneau autour du point indique la rareté.</div></li>
+    <li><span class="glyph"><i class="g-far"></i></span><div><b>Deux cartes proches</b> dans un même groupe, ou deux groupes reliés, intéressent les mêmes joueurs. Deux groupes voisins <b>sans lien entre eux</b> sont juste posés côte à côte : leur distance ne veut rien dire.</div></li>
+  </ul>
+  <p class="dlg-foot">Cliquez sur une carte pour voir celles que ses acheteurs collectionnent aussi, puis sur son groupe pour voir les groupes auxquels il est relié. Molette ou pincement pour zoomer.</p>
+</dialog>
+
+<dialog id="dlg-method" aria-labelledby="dlg-method-title">
+  <button type="button" class="dlg-close x" aria-label="Fermer">✕</button>
+  <h2 id="dlg-method-title">Méthode</h2>
+  <div class="method" id="method-body">
+    <h3>Les données</h3>
+    <p>Toutes les enchères conclues sur le marché de WikiMasters sur la période indiquée en bas de page : quelle carte, quel acheteur, à quel prix. Les identifiants des joueurs servent au calcul et ne sont jamais publiés : la carte ne contient que des titres de cartes et des compteurs.</p>
+    <h3>Les achats retenus</h3>
+    <p>La carte cherche des goûts de collectionneurs. On écarte donc les achats qui n'en disent rien :</p>
+    <ul>
+      <li>les comptes automatisés, qui achètent ou vendent sans pause jour et nuit, ou plus de 1&nbsp;000 cartes en une journée ;</li>
+      <li>les revendeurs, qui remettent en vente plus de la moitié de ce qu'ils achètent dans la semaine ;</li>
+      <li>les ventes répétées entre deux mêmes comptes, qui ressemblent à des échanges arrangés.</li>
+    </ul>
+    <h3>Les liens</h3>
+    <p>Deux cartes sont liées quand leurs acheteurs se recoupent. Chaque joueur compte d'autant moins qu'il achète de cartes différentes : un gros acheteur qui prend de tout ne relie pas tout. Un lien doit être porté par au moins 10 collectionneurs, et chaque carte garde ses 10 liens les plus forts.</p>
+    <h3>Les groupes</h3>
+    <p>Les groupes sont détectés automatiquement (méthode de Louvain) : des cartes plus liées entre elles qu'avec le reste. La position des points est calculée pour rapprocher les cartes liées (ForceAtlas2).</p>
+  </div>
+</dialog>
+
+<div id="tip" hidden></div>
+<script src="map.js"></script>
