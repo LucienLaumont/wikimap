@@ -406,7 +406,7 @@
   // défile d'un bloc ; tant qu'elle n'est pas en haut, glisser vers le haut la monte d'abord, et
   // glisser vers le bas la redescend quand son contenu est revenu au début.
   const sheet = $('detail'), phone = matchMedia(`(max-width: ${NARROW}px)`);
-  let sheetY = 0, sd = null;
+  let sheetY = 0, sd = null, closing = false;
   const scroller = () => sheet.querySelector(':scope > div:not([hidden])');
   function snaps() { const h = sheet.parentElement.clientHeight; return { full: 0, half: Math.round(h * 0.42), peek: Math.max(0, h - 148), h }; }
   function setSheet(y, animate) {
@@ -414,7 +414,7 @@
     sheet.style.transform = `translateY(${y}px)`;
   }
   function showDetail(id) {
-    const wasOpen = !sheet.hidden;
+    const wasOpen = !sheet.hidden && !closing; closing = false;
     $('detail-card').hidden = id !== 'detail-card'; $('detail-group').hidden = id !== 'detail-group'; sheet.hidden = false;
     scroller().scrollTop = 0;
     if (!phone.matches) { sheet.style.transform = ''; sheet.style.transition = ''; return; }
@@ -425,31 +425,41 @@
   sheet.addEventListener('touchstart', (e) => {
     if (!phone.matches || e.touches.length > 1) return;
     const y = e.touches[0].clientY;
-    sd = { y0: y, s0: sheetY, mode: null, y1: y, t1: performance.now(), v: 0 };
+    // geste parti de l'en-tête (poignée, « Fiche carte », Lien, ✕) : un coup franc vers le bas ferme
+    const head = y - sheet.getBoundingClientRect().top < 52;
+    sd = { y0: y, s0: sheetY, mode: null, head, pts: [[y, performance.now()]] };
   }, { passive: true });
+  // vitesse du doigt (px/ms, positive vers le bas) sur les 100 dernières millisecondes du geste
+  const speed = (pts) => {
+    const last = pts[pts.length - 1], first = pts.find((q) => last[1] - q[1] <= 100) || last;
+    return last[1] > first[1] ? (last[0] - first[0]) / (last[1] - first[1]) : 0;
+  };
   sheet.addEventListener('touchmove', (e) => {
     if (!sd) return;
     const y = e.touches[0].clientY, dy = y - sd.y0, s = snaps();
     if (!sd.mode) {
       if (Math.abs(dy) < 5) return;
-      // en haut : le contenu défile, sauf si l'on tire vers le bas depuis le début de la fiche
-      sd.mode = sheetY <= s.full + 1 && (dy < 0 || scroller().scrollTop > 0) ? 'scroll' : 'sheet';
+      // depuis l'en-tête : on déplace toujours le tiroir ; ailleurs, en haut, le contenu défile,
+      // sauf si l'on tire vers le bas depuis le début de la fiche
+      sd.mode = !sd.head && sheetY <= s.full + 1 && (dy < 0 || scroller().scrollTop > 0) ? 'scroll' : 'sheet';
     }
     if (sd.mode !== 'sheet') return;
     e.preventDefault();
-    const now = performance.now();
-    sd.v = (y - sd.y1) / Math.max(1, now - sd.t1); sd.y1 = y; sd.t1 = now;
+    sd.pts.push([y, performance.now()]); if (sd.pts.length > 20) sd.pts.shift();
     setSheet(Math.min(s.h - 56, Math.max(s.full, sd.s0 + dy)), false);
   }, { passive: false });
   const endDrag = () => {
     if (!sd) return;
     const d = sd; sd = null;
     if (d.mode !== 'sheet') return;
-    const s = snaps();
-    if (sheetY > s.peek + 24 && d.v >= 0) { clearSel(); return; } // tirée sous le cran du bas : fermée
+    const s = snaps(), v = speed(d.pts);
+    // glisse hors de l'écran, puis se ferme (sauf si une autre fiche a été ouverte entre-temps)
+    const close = () => { closing = true; setSheet(s.h, true); setTimeout(() => { if (closing) clearSel(); closing = false; }, 220); };
+    if (d.head && v > 0.7) return close(); // coup franc vers le bas depuis l'en-tête : fermée (~0,1 px/ms pour un glissement lent, 1 à 3 pour un coup de doigt)
+    if (sheetY > s.peek + 24 && v >= 0) return close(); // tirée sous le cran du bas : fermée
     const stops = [s.full, s.half, s.peek];
     let target = stops.reduce((a, b) => (Math.abs(b - sheetY) < Math.abs(a - sheetY) ? b : a));
-    if (Math.abs(d.v) > 0.5) target = d.v < 0 ? stops.filter((p) => p < sheetY).pop() ?? s.full : stops.find((p) => p > sheetY) ?? s.peek; // geste rapide : cran suivant
+    if (Math.abs(v) > 0.5) target = v < 0 ? stops.filter((p) => p < sheetY).pop() ?? s.full : stops.find((p) => p > sheetY) ?? s.peek; // geste rapide : cran suivant
     setSheet(target, true);
   };
   sheet.addEventListener('touchend', endDrag);
