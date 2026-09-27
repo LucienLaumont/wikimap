@@ -92,9 +92,8 @@ button, input { font: inherit; color: inherit; }
   padding: env(safe-area-inset-top, 0px) 20px 0; background: var(--bg); border-bottom: 1px solid var(--line); z-index: 20; }
 .brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; flex: none; }
 .mark { width: 24px; height: 24px; color: var(--accent); }
-.mark rect, .mark path { fill: none; stroke: currentColor; stroke-width: 1.2; }
-.mark path { opacity: 0.6; }
-.mark circle { fill: currentColor; }
+.mark rect { fill: none; stroke: currentColor; stroke-width: 1.4; }
+.mark path { fill: currentColor; }
 .brand-name { font-weight: 800; font-size: 18px; letter-spacing: -0.01em; }
 .brand-sub { padding-left: 16px; border-left: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 

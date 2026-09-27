@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- Logo WikiMap : un W façon Wikipédia (deux V qui se chevauchent et se croisent au milieu,
+       pleins et déliés, empattements) dans un carré, en vert menthe sur fond sombre -->
+  <rect width="24" height="24" fill="#070b0c"/>
+  <rect x="1.5" y="1.5" width="21" height="21" fill="none" stroke="#3ddbb6" stroke-width="1.4"/>
+  <path fill="#3ddbb6" d="M4.4 7.3h2.3l2.6 10.1h-0.9z M13.8 7.3h1l-5.5 10.1h-0.8z
+    M9.4 7.3h2.3l3.7 10.1h-0.9z M18.8 7.3h1l-4.4 10.1h-0.8z
+    M3.3 6.6h4.5v0.8h-4.5z M8.4 6.6h4.2v0.8h-4.2z M13 6.6h2.6v0.8h-2.6z M18 6.6h2.6v0.8h-2.6z"/>
+</svg>
