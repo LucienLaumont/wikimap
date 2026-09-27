@@ -394,7 +394,12 @@
   function emptyItem(ul, text) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = text; ul.append(li); }
   const gdot = (gid) => { const d = document.createElement('span'); d.className = 'gdot'; d.style.background = groupCol[gid]; return d; };
 
-  function clearSel() { selected = -1; selGroup = -1; $('detail').hidden = true; dirty = true; }
+  // symbole des wikibidous, la monnaie du jeu : un W dans un cercle
+  const COIN = '<svg class="coin" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.4"/>'
+    + '<path transform="translate(12 12.3) scale(.74) translate(-12 -12)" d="M4.4 7.3h2.3l2.6 10.1h-0.9z M13.8 7.3h1l-5.5 10.1h-0.8z '
+    + 'M9.4 7.3h2.3l3.7 10.1h-0.9z M18.8 7.3h1l-4.4 10.1h-0.8z M3.3 6.6h4.5v0.8h-4.5z M8.4 6.6h4.2v0.8h-4.2z M13 6.6h2.6v0.8h-2.6z M18 6.6h2.6v0.8h-2.6z"/></svg>';
+
+  function clearSel() { selected = -1; selGroup = -1; $('detail').hidden = true; setHash(''); dirty = true; }
   function selectCard(i, fly) {
     selected = i; selGroup = -1; dirty = true;
     const n = N[i], g = GR[n.group];
@@ -404,7 +409,8 @@
     $('d-cat').textContent = n.category || 'Sans description Wikidata';
     $('d-buyers').textContent = fmt.format(n.buyers);
     $('d-sales').textContent = fmt.format(n.sales || 0);
-    $('d-price').textContent = n.price == null ? '–' : fmt.format(Math.round(n.price));
+    if (n.price == null) { $('d-price').textContent = '–'; $('d-price').removeAttribute('aria-label'); }
+    else { $('d-price').innerHTML = fmt.format(Math.round(n.price)) + COIN; $('d-price').setAttribute('aria-label', `${fmt.format(Math.round(n.price))} wikibidous`); }
     $('d-wiki').href = 'https://fr.wikipedia.org/wiki/' + encodeURIComponent(n.label.replace(/ /g, '_'));
     const gb = $('d-group');
     gb.querySelector('.gdot').style.background = groupCol[g.id];
@@ -422,6 +428,7 @@
     $('nb-title').textContent = 'Achetées par les mêmes joueurs';
     $('nb-count').textContent = adj[i].length || '';
     $('detail-group').hidden = true; $('detail-card').hidden = false; $('detail').hidden = false;
+    setHash('carte=' + slug(n.label));
     if (fly) flyTo(n);
   }
   function selectGroup(gid, fly) {
@@ -444,13 +451,49 @@
     const vMax = Math.max(1, ...links.map(([, v]) => v));
     for (const [o, v] of links.slice(0, 12)) ul.append(listItem(gdot(+o), groupName(GR[o]), fmt.format(v), () => selectGroup(+o, true), Math.max(1, Math.round(v / vMax * 5))));
     if (!links.length) emptyItem(ul, 'Aucun : ce groupe est isolé.');
+    // cartes les plus centrales : centralité (somme des forces de liens) en 5 cases, relative à la
+    // première ; le nombre d'acheteurs passe en infobulle
     const uc = $('g-cards'); uc.textContent = '';
-    for (const i of g.members.slice().sort((a, b) => N[b].strength - N[a].strength).slice(0, 25))
-      uc.append(listItem(rarTag(N[i].rarity), N[i].label, fmt.format(N[i].buyers), () => selectCard(i, true)));
+    const central = g.members.slice().sort((a, b) => N[b].strength - N[a].strength).slice(0, 25);
+    const stMax = Math.max(1e-9, ...central.map((i) => N[i].strength));
+    for (const i of central) {
+      const li = listItem(rarTag(N[i].rarity), N[i].label, '', () => selectCard(i, true), Math.max(1, Math.round(N[i].strength / stMax * 5)));
+      li.title = `${N[i].label} · ${fmt.format(N[i].buyers)} acheteurs`; uc.append(li);
+    }
     $('detail-card').hidden = true; $('detail-group').hidden = false; $('detail').hidden = false;
+    setHash('groupe=' + (g.name ? slug(g.name) : g.id));
     if (fly) flyToGroup(g);
   }
   $('close').addEventListener('click', clearSel);
+
+  // ---- liens partageables : #carte=Titre_de_la_carte ou #groupe=Nom_du_groupe (groupe sans nom :
+  // son numéro, qui peut changer d'un calcul à l'autre)
+  const slug = (s) => encodeURIComponent(s.replace(/ /g, '_'));
+  function setHash(h) {
+    if (location.hash.slice(1) === h) return;
+    try { history.replaceState(null, '', location.pathname + location.search + (h ? '#' + h : '')); } catch (e) { /* page encadrée */ }
+  }
+  function fromHash() {
+    const m = /^#(carte|groupe)=(.+)$/.exec(location.hash);
+    if (!m || !N) return;
+    let name; try { name = decodeURIComponent(m[2]).replace(/_/g, ' '); } catch (e) { return; }
+    if (m[1] === 'carte') {
+      let i = N.findIndex((n) => n.label === name);
+      if (i < 0) i = N.findIndex((n) => n.norm === norm(name));
+      if (i >= 0) { hidden.delete(N[i].rarity); syncLegend(); selectCard(i, true); }
+    } else {
+      const g = GR.find((x) => x.name === name) || GR.find((x) => x.name && norm(x.name) === norm(name)) || (/^\d+$/.test(name) ? GR[+name] : null);
+      if (g) selectGroup(g.id, true);
+    }
+  }
+  addEventListener('hashchange', fromHash);
+  // bouton « Copier le lien » de la fiche
+  $('share').addEventListener('click', async () => {
+    const b = $('share'), label = b.querySelector('.t');
+    try { await navigator.clipboard.writeText(location.href); label.textContent = 'Lien copié'; }
+    catch (e) { label.textContent = 'Copiez l’adresse'; }
+    setTimeout(() => { label.textContent = 'Lien'; }, 1800);
+  });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.activeElement !== $('q') && !document.querySelector('dialog[open]')) clearSel(); });
   $('brand').addEventListener('click', (e) => { e.preventDefault(); if (!N) return; clearSel(); const v = fitView(); animateTo(v.x, v.y, v.k, false); });
 
@@ -623,6 +666,7 @@
     footer(g);
     setLayout(names[0]);
     $('status').hidden = true; loop();
+    fromHash(); // lien partagé : ouvre directement la carte ou le groupe
   }).catch((err) => {
     $('status').textContent = `La carte n'a pas pu être chargée (${err.message}).`;
     $('foot-data').textContent = 'Données indisponibles';

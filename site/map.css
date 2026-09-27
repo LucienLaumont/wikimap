@@ -174,6 +174,12 @@ button, input { font: inherit; color: inherit; }
 #detail { top: 20px; right: 20px; width: min(384px, calc(100% - 40px)); max-height: calc(100% - 40px); display: flex; flex-direction: column; }
 #detail > div:not([hidden]) { display: flex; flex-direction: column; min-height: 0; }
 #close { position: absolute; top: 6px; right: 8px; z-index: 1; }
+#share { position: absolute; top: 7px; right: 42px; z-index: 1; gap: 6px; }
+#share svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+/* symbole des wikibidous après le prix */
+.coin { width: 0.92em; height: 0.92em; margin-left: 6px; vertical-align: -0.12em; color: var(--accent); }
+.coin circle { fill: none; stroke: currentColor; stroke-width: 1.9; }
+.coin path { fill: currentColor; }
 .gstrip { height: 3px; background: var(--gcol, var(--line)); flex: none; }
 #detail header.sec { gap: 8px; }
 .head-row { display: flex; align-items: center; gap: 10px; }
