@@ -401,14 +401,21 @@
 
   function clearSel() { selected = -1; selGroup = -1; $('detail').hidden = true; sheetClosed(); setHash(''); dirty = true; }
 
-  // ---- fiche : panneau à droite sur grand écran ; sur téléphone, tiroir à trois crans (bas : le
-  // titre seul, milieu : à l'ouverture, haut : plein écran) qu'on fait glisser. Toute la fiche
-  // défile d'un bloc ; tant qu'elle n'est pas en haut, glisser vers le haut la monte d'abord, et
-  // glisser vers le bas la redescend quand son contenu est revenu au début.
+  // ---- fiche : panneau à droite sur grand écran ; sur téléphone, tiroir à deux crans (milieu : à
+  // l'ouverture, haut : plein écran) qu'on fait glisser. Toute la fiche défile d'un bloc ; tant
+  // qu'elle n'est pas en haut, glisser vers le haut la monte d'abord, et glisser vers le bas la
+  // redescend quand son contenu est revenu au début. Relâchée vers le bas avec son haut sous la
+  // moitié de l'écran, elle se ferme.
   const sheet = $('detail'), phone = matchMedia(`(max-width: ${NARROW}px)`);
   let sheetY = 0, sd = null, closing = false;
   const scroller = () => sheet.querySelector(':scope > div:not([hidden])');
-  function snaps() { const h = sheet.parentElement.clientHeight; return { full: 0, half: Math.round(h * 0.42), peek: Math.max(0, h - 148), h }; }
+  // crans en px depuis le haut de la zone carte ; le milieu place le haut de la fiche à 45 % de
+  // l'écran, et au moins 40 px au-dessus de la ligne de fermeture (50 %) : un simple toucher ou un
+  // petit glissement ne la ferment jamais, même sur un petit écran
+  function snaps() {
+    const h = sheet.parentElement.clientHeight, top = sheet.parentElement.getBoundingClientRect().top;
+    return { full: 0, half: Math.max(0, Math.round(Math.min(innerHeight * 0.45, innerHeight * 0.5 - 40) - top)), closeAt: innerHeight * 0.5 - top, h };
+  }
   function setSheet(y, animate) {
     sheetY = y; sheet.style.transition = animate ? 'transform 0.28s cubic-bezier(.2,.8,.2,1)' : 'none';
     sheet.style.transform = `translateY(${y}px)`;
@@ -428,7 +435,7 @@
   sheet.addEventListener('touchstart', (e) => {
     if (!phone.matches || e.touches.length > 1) return;
     const y = e.touches[0].clientY;
-    // geste parti de l'en-tête (poignée, « Fiche carte », Lien, ✕) : un coup franc vers le bas ferme
+    // geste parti de l'en-tête (poignée, « Fiche carte », Lien, ✕) : il déplace toujours le tiroir
     const head = y - sheet.getBoundingClientRect().top < 52;
     sd = { y0: y, s0: sheetY, mode: null, head, pts: [[y, performance.now()]] };
   }, { passive: true });
@@ -458,22 +465,21 @@
     const s = snaps(), v = speed(d.pts);
     // glisse hors de l'écran, puis se ferme (sauf si une autre fiche a été ouverte entre-temps)
     const close = () => { closing = true; setSheet(s.h, true); setTimeout(() => { if (closing) clearSel(); closing = false; }, 220); };
-    if (d.head && v > 0.35) return close(); // coup franc vers le bas depuis l'en-tête : fermée (~0,1 px/ms pour un glissement lent, 1 à 3 pour un coup de doigt)
-    if (sheetY > s.peek + 24 && v >= 0) return close(); // tirée sous le cran du bas : fermée
-    const stops = [s.full, s.half, s.peek];
-    let target = stops.reduce((a, b) => (Math.abs(b - sheetY) < Math.abs(a - sheetY) ? b : a));
-    if (Math.abs(v) > 0.3) target = v < 0 ? stops.filter((p) => p < sheetY).pop() ?? s.full : stops.find((p) => p > sheetY) ?? s.peek; // geste rapide : cran suivant
+    if (sheetY > d.s0 && sheetY > s.closeAt) return close(); // relâchée vers le bas sous la moitié de l'écran : fermée
+    // sinon le cran le plus proche ; un geste net (> 0,3 px/ms) choisit le cran dans son sens
+    let target = Math.abs(sheetY - s.full) < Math.abs(sheetY - s.half) ? s.full : s.half;
+    if (Math.abs(v) > 0.3) target = v < 0 ? s.full : s.half;
     setSheet(target, true);
   };
   sheet.addEventListener('touchend', endDrag);
   sheet.addEventListener('touchcancel', endDrag);
   // rotation, clavier, passage en grand écran : on se recale sur le cran le plus proche
   new ResizeObserver(() => {
-    if (sheet.hidden) return;
+    if (sheet.hidden || closing) return;
     if (!phone.matches) { sheetClosed(); return; }
     document.querySelector('.app').classList.add('sheet-open');
-    const s = snaps(), stops = [s.full, s.half, s.peek];
-    setSheet(stops.reduce((a, b) => (Math.abs(b - sheetY) < Math.abs(a - sheetY) ? b : a)), false);
+    const s = snaps();
+    setSheet(Math.abs(sheetY - s.full) < Math.abs(sheetY - s.half) ? s.full : s.half, false);
   }).observe($('stage'));
   function selectCard(i, fly) {
     selected = i; selGroup = -1; dirty = true;
