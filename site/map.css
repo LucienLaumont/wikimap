@@ -247,7 +247,8 @@ dialog h2 { margin: 0 0 16px; padding: 0 36px 14px 0; border-bottom: 1px solid v
 /* ---- écrans étroits et téléphone */
 @media (max-width: 1100px) {
   .brand-sub { display: none; }
-  .stat:nth-child(n + 4) { display: none; }
+  /* écran étroit : cartes, groupes, achats et visites ; collectionneurs et période masqués */
+  .stat:nth-child(4), .stat:nth-child(5) { display: none; }
 }
 @media (max-width: 640px) {
   .topbar { flex-wrap: wrap; gap: 8px; padding: calc(6px + env(safe-area-inset-top, 0px)) 12px 10px; }

@@ -91,6 +91,15 @@ racine, une fois `site/data/graph.json` généré :
 npx wrangler deploy
 ```
 
+Le petit Worker de `worker/index.js` ajoute un compteur de visites public (`/api/visit`), affiché
+en pied de page : un seul nombre dans une base D1, rien sur les visiteurs (ni cookie, ni adresse IP,
+ni identifiant). Une visite est comptée une fois par session de navigateur. Première installation :
+
+```sh
+npx wrangler d1 create wikimap          # puis reporter database_id dans wrangler.jsonc
+npx wrangler d1 execute wikimap --remote --file worker/schema.sql
+```
+
 ## Licence
 
 Code sous licence [MIT](LICENSE).

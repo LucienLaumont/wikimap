@@ -618,6 +618,22 @@
       s.className = 'stat'; b.textContent = v; c.className = 'cap'; c.textContent = l; s.append(b, c); box.append(s);
     }
     if (d0 && d1) box.lastChild.title = `Ventes du ${fmtDate.format(d0)} au ${fmtDate.format(d1)}`;
+    // compteur de visites (worker/index.js) : masqué tant qu'il n'a pas répondu, et s'il ne répond pas
+    const v = document.createElement('div'), vb = document.createElement('b'), vc = document.createElement('span');
+    v.className = 'stat'; v.id = 'stat-visits'; v.hidden = true; vc.className = 'cap'; vc.textContent = 'Visites'; v.append(vb, vc); box.append(v);
+    countVisit();
+  }
+  // une visite par session de navigateur (un rechargement ne compte pas) ; ni cookie ni identifiant
+  function countVisit() {
+    let counted = false;
+    try { counted = sessionStorage.getItem('wikimap-visit') === '1'; } catch (e) { /* stockage indisponible */ }
+    fetch('api/visit', { method: counted ? 'GET' : 'POST' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
+      .then((d) => {
+        try { sessionStorage.setItem('wikimap-visit', '1'); } catch (e) { /* stockage indisponible */ }
+        const el = $('stat-visits'); el.querySelector('b').textContent = fmt.format(d.visits); el.hidden = false;
+      })
+      .catch(() => {}); // pas de compteur (aperçu, serveur local) : le bloc reste masqué
   }
 
   // ---- chargement

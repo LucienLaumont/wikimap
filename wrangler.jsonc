@@ -1,9 +1,20 @@
-// Cloudflare : le site statique de site/ (données comprises) publié comme Worker à ressources statiques.
-// Publication depuis la racine : npx wrangler deploy
+// Cloudflare : le site statique de site/ (données comprises) et un petit Worker pour le compteur de
+// visites (/api/*), qui garde un seul nombre dans une base D1. Publication depuis la racine :
+//   npx wrangler deploy
 {
   "name": "wikimap",
+  "main": "worker/index.js",
   "compatibility_date": "2026-09-27",
   "assets": {
-    "directory": "./site"
-  }
+    "directory": "./site",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wikimap",
+      "database_id": "ac0fa7dd-789b-4a61-b1f9-6df707172ff4"
+    }
+  ]
 }
