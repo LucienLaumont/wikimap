@@ -412,6 +412,9 @@
   function setSheet(y, animate) {
     sheetY = y; sheet.style.transition = animate ? 'transform 0.28s cubic-bezier(.2,.8,.2,1)' : 'none';
     sheet.style.transform = `translateY(${y}px)`;
+    // le navigateur ne fait défiler lui-même la fiche qu'en haut (voir touch-action dans map.css) :
+    // ailleurs, c'est le tiroir qui suit le doigt, sans que le navigateur ne ralentisse les gestes
+    sheet.classList.toggle('sheet-full', y <= 0.5);
   }
   function showDetail(id) {
     const wasOpen = !sheet.hidden && !closing; closing = false;
@@ -438,7 +441,7 @@
     if (!sd) return;
     const y = e.touches[0].clientY, dy = y - sd.y0, s = snaps();
     if (!sd.mode) {
-      if (Math.abs(dy) < 5) return;
+      if (Math.abs(dy) < 2) return;
       // depuis l'en-tête : on déplace toujours le tiroir ; ailleurs, en haut, le contenu défile,
       // sauf si l'on tire vers le bas depuis le début de la fiche
       sd.mode = !sd.head && sheetY <= s.full + 1 && (dy < 0 || scroller().scrollTop > 0) ? 'scroll' : 'sheet';
@@ -455,11 +458,11 @@
     const s = snaps(), v = speed(d.pts);
     // glisse hors de l'écran, puis se ferme (sauf si une autre fiche a été ouverte entre-temps)
     const close = () => { closing = true; setSheet(s.h, true); setTimeout(() => { if (closing) clearSel(); closing = false; }, 220); };
-    if (d.head && v > 0.7) return close(); // coup franc vers le bas depuis l'en-tête : fermée (~0,1 px/ms pour un glissement lent, 1 à 3 pour un coup de doigt)
+    if (d.head && v > 0.35) return close(); // coup franc vers le bas depuis l'en-tête : fermée (~0,1 px/ms pour un glissement lent, 1 à 3 pour un coup de doigt)
     if (sheetY > s.peek + 24 && v >= 0) return close(); // tirée sous le cran du bas : fermée
     const stops = [s.full, s.half, s.peek];
     let target = stops.reduce((a, b) => (Math.abs(b - sheetY) < Math.abs(a - sheetY) ? b : a));
-    if (Math.abs(v) > 0.5) target = v < 0 ? stops.filter((p) => p < sheetY).pop() ?? s.full : stops.find((p) => p > sheetY) ?? s.peek; // geste rapide : cran suivant
+    if (Math.abs(v) > 0.3) target = v < 0 ? stops.filter((p) => p < sheetY).pop() ?? s.full : stops.find((p) => p > sheetY) ?? s.peek; // geste rapide : cran suivant
     setSheet(target, true);
   };
   sheet.addEventListener('touchend', endDrag);
