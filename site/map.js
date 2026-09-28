@@ -18,6 +18,9 @@
   const glr = window.WikiGL ? WikiGL.create(glCanvas) : null;
   let useGL = !!glr;
   if (!useGL) glCanvas.remove();
+  // toute erreur de la carte graphique (pilote exotique, contexte perdu) : on passe en Canvas 2D plutôt que
+  // d'afficher une carte vide
+  function glFail(e) { console.warn('WebGL, passage en Canvas 2D :', e && e.message || e); useGL = false; glCanvas.remove(); dirty = true; }
   let sceneLayer = document.createElement('canvas'), backLayer = document.createElement('canvas');
   const $ = (id) => document.getElementById(id);
   // séparateur de milliers : espace insécable ordinaire, Sora n'a pas l'espace fine du format français
@@ -49,11 +52,11 @@
       groupCol = GR.map((g) => g.size < SMALL ? colors.small : `hsl(${hue(g)}, ${v('--group-s')}, ${v('--group-l')})`);
       groupText = GR.map((g) => g.size < SMALL ? colors.muted : `hsl(${hue(g)}, ${v('--group-s')}, ${v('--group-text-l')})`);
       if (detailGroup >= 0) $('detail').style.setProperty('--gcol', groupCol[detailGroup]);
-      if (glr) {
+      if (useGL) try {
         const rgba = new Uint8Array(GR.length * 4);
         groupCol.forEach((c, k) => rgba.set([...rgb(c).map((v) => Math.round(v * 255)), 255], k * 4));
         glr.setGroupColors(rgba, GR.length);
-      }
+      } catch (e) { glFail(e); }
     }
     glColors = { edge: rgb(`rgb(${colors.edge})`), accent: rgb(colors.accent), rar: new Float32Array(24) };
     [...RARITIES, 'muted'].forEach((r, k) => glColors.rar.set(rgb(colors[r]), k * 3));
@@ -78,7 +81,7 @@
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = canvas.clientWidth; H = canvas.clientHeight;
     canvas.width = gridCanvas.width = sceneLayer.width = backLayer.width = W * dpr; canvas.height = gridCanvas.height = sceneLayer.height = backLayer.height = H * dpr;
-    if (glr) glr.resize(W, H, dpr, ZONE_RES);
+    if (useGL) try { glr.resize(W, H, dpr, ZONE_RES); } catch (e) { glFail(e); }
     zoneLayer.width = Math.ceil(W * ZONE_RES); zoneLayer.height = Math.ceil(H * ZONE_RES);
     dirty = true;
   }
@@ -95,7 +98,7 @@
   function setLayout(name) {
     const xy = layouts[name].xy;
     N.forEach((n, i) => { n.x = xy[2 * i]; n.y = xy[2 * i + 1]; });
-    if (glr) glr.setPositions(posArray());
+    if (useGL) try { glr.setPositions(posArray()); } catch (e) { glFail(e); }
     grid = new Map();
     N.forEach((n, i) => { const k = Math.floor(n.x / gridSize) + ',' + Math.floor(n.y / gridSize); (grid.get(k) || grid.set(k, []).get(k)).push(i); });
     GR.forEach((g) => { g.members = []; });
@@ -448,12 +451,12 @@
   // À chaque image : la carte est redessinée entièrement, nette, dès que l'état ou la caméra a changé
   // (WebGL : quelques millisecondes) ; le survol seul ne refait que l'écran.
   function loop() {
-    if (useGL && glr.lost()) { useGL = false; glCanvas.remove(); dirty = true; } // carte graphique perdue : Canvas 2D
+    if (useGL && glr.lost()) { glFail('contexte perdu'); dirty = true; } // carte graphique perdue : Canvas 2D
     let redraw = cam.x !== shownCam.x || cam.y !== shownCam.y || cam.k !== shownCam.k;
-    if (dirty) { dirty = false; hl = highlight(); if (useGL) pushState(); redraw = true; }
+    if (dirty) { dirty = false; hl = highlight(); if (useGL) try { pushState(); } catch (e) { glFail(e); } redraw = true; }
     if (redraw) {
-      if (useGL) glr.render(cam, glOptions());
-      else { drawScene({ ...cam }, backLayer.getContext('2d'), hl); [sceneLayer, backLayer] = [backLayer, sceneLayer]; }
+      if (useGL) try { glr.render(cam, glOptions()); } catch (e) { glFail(e); }
+      if (!useGL) { drawScene({ ...cam }, backLayer.getContext('2d'), hl); [sceneLayer, backLayer] = [backLayer, sceneLayer]; }
       repaint = true;
     }
     if (repaint) paint();
@@ -893,7 +896,7 @@
     order = N.map((_, i) => i).sort((a, b) => N[a].strength - N[b].strength); // faibles d'abord, centrales dessus
     sMax = N[order[Math.floor(order.length * 0.9)]].strength;
     kMin = 1.4 / N.map((n) => n.size).sort((a, b) => a - b)[N.length >> 1];
-    if (glr) glr.setGraph(N.length, posArray(), Float32Array.from(order), flat(E.filter(([a, b]) => N[a].group === N[b].group)), flat(interE));
+    if (useGL) try { glr.setGraph(N.length, posArray(), Float32Array.from(order), flat(E.filter(([a, b]) => N[a].group === N[b].group)), flat(interE)); } catch (e) { glFail(e); }
     readColors();
 
     const counts = {};

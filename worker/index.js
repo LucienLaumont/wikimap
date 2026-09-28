@@ -7,6 +7,19 @@
 // Aperçu privé : tant que le secret SITE_PASSWORD existe, tout le site demande un mot de passe
 // (authentification HTTP du navigateur, identifiant libre). Pour ouvrir le site au public :
 //   npx wrangler secret delete SITE_PASSWORD
+
+// Pages, scripts, styles et données : revalidés à chaque visite (réponse « inchangé » sans contenu
+// quand rien n'a bougé). Sans ça, un navigateur peut garder un ancien fichier et le mélanger aux
+// nouveaux après une mise à jour (ancien map.css avec nouveau map.js : carte vide).
+const REVALIDATE = /(\/|\.html|\.js|\.css|\.json)$/;
+async function asset(request, env) {
+  const res = await env.ASSETS.fetch(request);
+  if (!REVALIDATE.test(new URL(request.url).pathname)) return res;
+  const out = new Response(res.body, res);
+  out.headers.set('cache-control', 'no-cache');
+  return out;
+}
+
 const enc = new TextEncoder();
 function authorized(request, password) {
   const m = /^Basic (.+)$/.exec(request.headers.get('authorization') || '');
@@ -26,7 +39,7 @@ export default {
       });
     }
     const url = new URL(request.url);
-    if (url.pathname !== '/api/visit') return env.ASSETS.fetch(request);
+    if (url.pathname !== '/api/visit') return asset(request, env);
     const json = (body, status = 200) => new Response(JSON.stringify(body), {
       status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
     });

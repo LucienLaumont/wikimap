@@ -84,7 +84,9 @@ Le site charge `data/graph.json` par une requête relative : il faut un petit se
 python -m http.server 8000 --directory site
 ```
 
-puis ouvrir http://localhost:8000.
+puis ouvrir http://localhost:8000. Ce petit serveur ne demande pas au navigateur de revalider les
+fichiers : après une modification, recharger sans le cache (Ctrl+F5). En ligne, le Worker s'en charge
+(`cache-control: no-cache` sur pages, scripts, styles et données, voir `worker/index.js`).
 
 ## Publier
 
