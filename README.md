@@ -1,14 +1,14 @@
 # WikiMap
 
 **La carte des enchères de WikiMasters** : les cartes du jeu que les mêmes collectionneurs achètent
-ensemble, regroupées par affinité. Environ 9 500 cartes, 130 groupes nommés (une série, un sport, un
-parti…), et les liens de co-achat entre eux.
+ensemble, regroupées par affinité. Environ 19 500 cartes, près de 600 groupes nommés (une série, un
+sport, un parti…), et les liens de co-achat entre eux.
 
 Projet indépendant, non affilié à WikiMasters.
 
 ## Ce que montre la carte
 
-- **Un point, c'est une carte**, achetée aux enchères par au moins 75 collectionneurs différents.
+- **Un point, c'est une carte**, achetée aux enchères par au moins 50 collectionneurs différents.
   Plus il est gros, plus la carte est au cœur de son groupe ; l'anneau autour indique sa rareté.
 - **Un lien relie deux cartes** achetées par au moins 10 mêmes collectionneurs.
 - **Une couleur, c'est un groupe** de cartes souvent collectionnées ensemble.
@@ -25,10 +25,14 @@ compteurs.
 2. **Graphe** (`pipeline/graph.py`) : deux cartes sont liées quand leurs acheteurs se recoupent
    (cosinus, chaque joueur comptant d'autant moins qu'il achète de cartes différentes). Un lien doit
    être porté par au moins 10 collectionneurs ; chaque carte garde ses 10 liens les plus forts.
-   Groupes détectés par la méthode de Louvain.
+   Groupes détectés par la méthode de Louvain. Sur une carte de cette taille, Louvain colle entre eux
+   des petits thèmes à peine reliés (cannabis, champignons, psychiatrie…) : chaque groupe est donc
+   recalculé sur ses seuls liens, et redécoupé si ses morceaux sont nettement séparés (plus liés à
+   eux-mêmes qu'aux autres morceaux).
 3. **Noms des groupes** (`pipeline/names.json`, appliqués par `pipeline/names.py`) : relus à la
    main. Un nom est rattaché à des cartes, pas à un numéro de groupe, et suit donc son groupe d'un
-   calcul à l'autre.
+   calcul à l'autre. `pipeline/names-75.json` : noms de l'ancienne carte (75 acheteurs par carte),
+   gardée en archive dans `site/data/graph-75.json` (visible avec `?carte=75`).
 4. **Disposition** (`pipeline/layout.mjs`) : ForceAtlas2, graine fixe.
 
 ## Organisation

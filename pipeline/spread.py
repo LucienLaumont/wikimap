@@ -1,17 +1,17 @@
 """spread.py — mesure l'éclatement des groupes sur la map (contrôle de layout.mjs).
 
-    python pipeline/spread.py    (depuis la racine)
+    python pipeline/spread.py [graph.json]   (depuis la racine)
 
-Pour chaque disposition de site/data/graph.json et chaque groupe nommé : part des cartes
+Pour chaque disposition de site/data/<fichier> et chaque groupe nommé : part des cartes
 situées loin du cœur du groupe (plus de 4 fois la distance médiane de ses cartes à ce cœur, avec
 un plancher proportionnel à la taille du groupe). Un groupe compact est à 0 %, un groupe coupé en
 deux morceaux éloignés approche 50 %. Aussi : le rayon de la carte en rayons de point médian
 (compacité) et le rapport des distances entre groupes sans lien et groupes liés.
 """
-import json, pathlib
+import json, pathlib, sys
 import numpy as np
 
-g = json.loads((pathlib.Path(__file__).resolve().parent.parent / 'site' / 'data' / 'graph.json').read_text(encoding='utf-8'))
+g = json.loads((pathlib.Path(__file__).resolve().parent.parent / 'site' / 'data' / (sys.argv[1] if len(sys.argv) > 1 else 'graph.json')).read_text(encoding='utf-8'))
 N, GR = g['nodes'], g['groups']
 strength = np.array([n['strength'] for n in N])
 for name, L in g['layouts'].items():

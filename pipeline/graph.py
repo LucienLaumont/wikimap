@@ -1,9 +1,14 @@
 """graph.py — graphe carte <-> carte des co-achats, pour la map.
 
-    python pipeline/graph.py [--min-buyers 75] [--min-co 10] [--top-k 10]   (depuis la racine, après buyers.py)
+    python pipeline/graph.py [--min-buyers 50] [--min-co 10] [--top-k 10] [--out graph.json]
+                             [--split 0.5] [--split-min 8] [--names names.json]
+
+    Ancienne carte (archive, site/data/graph-75.json) : --min-buyers 75 --split 0 --names names-75.json
+                                                         --out graph-75.json
+                             (depuis la racine, après buyers.py)
 
 Entrée  : data/purchases.parquet, $WIKIMAP_INPUT/cards.parquet (catalogue des cartes)
-Sortie  : site/data/graph.json { nodes, edges: [[i, j, poids, co_acheteurs], ...], groups, data }
+Sortie  : site/data/<--out> { nodes, edges: [[i, j, poids, co_acheteurs], ...], groups, data }
           (site/ = ce qui est publié ; les positions sont ajoutées ensuite par layout.mjs)
 
   - nœuds : cartes achetées par au moins --min-buyers acheteurs distincts (acheteurs retenus par
@@ -16,7 +21,8 @@ Sortie  : site/data/graph.json { nodes, edges: [[i, j, poids, co_acheteurs], ...
   - les cartes restées sans lien sont retirées ; strength = somme des poids de ses liens (taille
     du point sur la map : carte centrale dans son groupe ou faiblement rattachée) ;
   - groupes : Louvain pondéré (graine fixe, --resolution) ; pour chaque groupe, ses cartes les plus
-    centrales, le nombre de liens vers chacun des autres groupes et son nom (names.py / names.json).
+    centrales, le nombre de liens vers chacun des autres groupes et son nom (names.py / names.json) ;
+    avec --split, les groupes composites sont redécoupés (voir split()) et gardent leur famille.
 """
 import argparse, duckdb, json, os, pathlib, time
 import networkx as nx
@@ -25,10 +31,14 @@ from scipy import sparse
 from names import apply_names
 
 ap = argparse.ArgumentParser()
-ap.add_argument('--min-buyers', type=int, default=75)
+ap.add_argument('--min-buyers', type=int, default=50)
 ap.add_argument('--min-co', type=int, default=10)
 ap.add_argument('--top-k', type=int, default=10)
 ap.add_argument('--resolution', type=float, default=1.0)
+ap.add_argument('--split', type=float, default=0.5)  # découpe les groupes composites (0 : pas de découpage)
+ap.add_argument('--split-min', type=int, default=8)
+ap.add_argument('--names', default='names.json')  # fichier de noms dans pipeline/ (un par carte)
+ap.add_argument('--out', default='graph.json')  # fichier dans site/data/ : plusieurs cartes peuvent coexister
 args = ap.parse_args()
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -45,13 +55,13 @@ c.sql("create table pe as select p.* from p join cb using (card_id)")
 c.sql("create table bk as select winner_id, count(*) k from pe group by 1 having count(*) >= 2")
 c.sql("create table cards as select card_id, row_number() over (order by card_id) - 1 i from cb")
 c.sql("create table buyers as select winner_id, k, row_number() over (order by winner_id) - 1 j from bk")
-rows, cols, k = c.sql("""select b.j, x.i, b.k from pe join buyers b using (winner_id) join cards x using (card_id)""").fetchnumpy().values()
+rows, cols, k = c.sql("""select b.j, x.i, b.k from pe join buyers b using (winner_id) join cards x using (card_id) order by 1, 2""").fetchnumpy().values()
 n_cards, n_buyers = c.sql('select count(*) from cards').fetchone()[0], c.sql('select count(*) from buyers').fetchone()[0]
 step(f'{n_cards:,} cartes, {n_buyers:,} acheteurs, {len(rows):,} achats (acheteur, carte)')
 
 # ---- co-achats : K = Bᵀ B (acheteurs communs), S = Bᵀ W B (pondéré)
-B = sparse.csr_matrix((np.ones(len(rows), np.float32), (rows, cols)), shape=(n_buyers, n_cards))
-w = np.zeros(n_buyers, np.float32)
+B = sparse.csr_matrix((np.ones(len(rows)), (rows, cols)), shape=(n_buyers, n_cards))
+w = np.zeros(n_buyers)
 w[rows] = 1.0 / (k[rows] - 1)
 K = (B.T @ B).tocoo()
 S = (B.T @ sparse.diags(w) @ B).tocsr()
@@ -65,7 +75,7 @@ step(f'{len(i):,} paires avec >= {args.min_co} acheteurs communs')
 
 # ---- top-k voisins de chaque carte (un lien est gardé s'il est dans le top-k d'un des deux bouts)
 src = np.concatenate([i, j]); dst = np.concatenate([j, i]); ss = np.concatenate([s, s]); idx = np.concatenate([np.arange(len(i))] * 2)
-order = np.lexsort((-ss, src))
+order = np.lexsort((dst, -ss, src))  # dst départage les ex aequo : calcul reproductible
 src_o = src[order]
 rank = np.arange(len(order)) - np.searchsorted(src_o, src_o)
 keep = np.unique(idx[order][rank < args.top_k])
@@ -97,6 +107,50 @@ G = nx.Graph()
 G.add_nodes_from(range(len(nodes)))
 G.add_weighted_edges_from((a, b, x) for a, b, x, _ in edges)
 com = sorted(nx.community.louvain_communities(G, weight='weight', resolution=args.resolution, seed=1), key=len, reverse=True)
+step(f"{len(com)} groupes avant découpage (modularité {nx.community.modularity(G, com, weight='weight'):.3f})")
+
+
+def split(members):
+    """Découpe un groupe fait de plusieurs thèmes collés : Louvain sur ses seuls liens internes.
+    Sur un grand graphe, Louvain ne sépare plus les petits groupes reliés par quelques liens (limite de
+    résolution de la modularité) : cannabis, champignons et psychiatrie finissent ensemble. On garde le
+    découpage si sa modularité interne atteint --split ; les morceaux de moins de --split-min cartes
+    rejoignent le morceau auquel ils sont le plus liés. Puis chaque morceau doit peser plus en liens
+    internes qu'en liens vers les autres morceaux : sinon (groupe homogène que Louvain coupe au hasard,
+    comme les actrices pornographiques) il rejoint le morceau voisin le plus lié, le plus faible d'abord."""
+    H = G.subgraph(members)
+    sub = nx.community.louvain_communities(H, weight='weight', seed=1)
+    if nx.community.modularity(H, sub, weight='weight') < args.split: return [members]
+    big = [set(c) for c in sub if len(c) >= args.split_min]
+    if len(big) < 2: return [members]
+    for c in sub:
+        if len(c) >= args.split_min: continue
+        w = [sum(d['weight'] for _, b, d in H.edges(c, data=True) if b in p) for p in big]
+        big[int(np.argmax(w))] |= c
+    while len(big) > 1:
+        part = {m: k for k, p in enumerate(big) for m in p}
+        W = np.zeros((len(big), len(big)))
+        for a, b, d in H.edges(data=True):
+            W[part[a], part[b]] += d['weight']
+            if part[a] != part[b]: W[part[b], part[a]] += d['weight']
+        ratio = [W[k, k] / (W[k].sum() - W[k, k] or 1e-9) for k in range(len(big))]
+        k = int(np.argmin(ratio))
+        if ratio[k] >= 1: break
+        out = W[k].copy(); out[k] = -1
+        big[int(np.argmax(out))].update(big[k])
+        del big[k]
+    return big
+
+
+if args.split > 0:
+    parts = [(k, p) for k, members in enumerate(com) for p in (split(members) if len(members) >= 2 * args.split_min else [members])]
+    step(f"découpage : {sum(1 for k in range(len(com)) if sum(1 for f, _ in parts if f == k) > 1)} groupes composites "
+         f"découpés, {len(parts)} groupes")
+else:
+    parts = list(enumerate(com))
+parts.sort(key=lambda t: -len(t[1]))
+com = [p for _, p in parts]
+family = [f for f, _ in parts]  # groupe d'origine avant découpage (même numéro = même grand ensemble)
 for gid, members in enumerate(com):
     for m in members: nodes[m]['group'] = gid
 between = {}
@@ -104,7 +158,7 @@ for a, b, _, _ in edges:
     ga, gb = nodes[a]['group'], nodes[b]['group']
     if ga != gb:
         for x, y in ((ga, gb), (gb, ga)): between.setdefault(x, {}).setdefault(y, 0); between[x][y] += 1
-groups = [dict(id=gid, size=len(members),
+groups = [dict(id=gid, size=len(members), **(dict(family=family[gid]) if args.split > 0 else {}),
                top=[nodes[m]['label'] for m in sorted(members, key=lambda m: -nodes[m]['strength'])[:5]],
                links=dict(sorted(((str(k), v) for k, v in between.get(gid, {}).items()), key=lambda t: -t[1])))
           for gid, members in enumerate(com)]
@@ -117,13 +171,13 @@ first, last, n_purchases, n_collectors = c.sql(f"""select min(settled_at)::date:
 data = dict(first_sale=first, last_sale=last, purchases=n_purchases, collectors=n_collectors)
 
 graph = apply_names(dict(
-    params=vars(args) | dict(generated=time.strftime('%Y-%m-%d %H:%M'), dropped=int(n_cards - len(linked))),
+    params={k: v for k, v in vars(args).items() if k not in ('out', 'names')} | dict(generated=time.strftime('%Y-%m-%d %H:%M'), dropped=int(n_cards - len(linked))),
     data=data,
     nodes=nodes,
     edges=edges,
     groups=groups,
-))
+), args.names)
 OUT = ROOT / 'site' / 'data'
 OUT.mkdir(parents=True, exist_ok=True)
-(OUT / 'graph.json').write_text(json.dumps(graph, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
-step(f'{len(linked):,} cartes liées ({n_cards - len(linked):,} sans lien retirées), {len(edges):,} liens -> site/data/graph.json')
+(OUT / args.out).write_text(json.dumps(graph, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
+step(f'{len(linked):,} cartes liées ({n_cards - len(linked):,} sans lien retirées), {len(edges):,} liens -> site/data/{args.out}')

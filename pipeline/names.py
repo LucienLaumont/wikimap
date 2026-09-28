@@ -1,6 +1,7 @@
 """names.py — donne leur nom aux groupes de la map à partir de pipeline/names.json.
 
-    python pipeline/names.py     (depuis la racine : réapplique les noms à site/data/graph.json,
+    python pipeline/names.py [graph.json] [names.json]   (depuis la racine : réapplique les noms de
+                                  pipeline/<names.json> à site/data/<graph.json>,
                                   après une correction de names.json, sans tout recalculer)
 
 graph.py appelle apply_names() à chaque recalcul. Un nom est rattaché à des cartes, pas à un
@@ -9,15 +10,16 @@ moins la moitié de ses cartes encore présentes sur la map. En cas de concurren
 correspondance passe d'abord ; un groupe ne reçoit qu'un nom. Les groupes de 5 cartes ou plus
 restés sans nom sont listés pour être nommés à la main.
 """
-import json, pathlib
+import json, pathlib, sys
 
-NAMES = pathlib.Path(__file__).parent / 'names.json'
-GRAPH = pathlib.Path(__file__).resolve().parent.parent / 'site' / 'data' / 'graph.json'
+HERE = pathlib.Path(__file__).parent
+DATA = pathlib.Path(__file__).resolve().parent.parent / 'site' / 'data'
 MIN_SHARE = 0.5
 
 
-def apply_names(graph):
-    entries = json.loads(NAMES.read_text(encoding='utf-8'))['groups'] if NAMES.exists() else []
+def apply_names(graph, names='names.json'):  # names : fichier de noms dans pipeline/ (un par carte)
+    path = HERE / names
+    entries = json.loads(path.read_text(encoding='utf-8'))['groups'] if path.exists() else []
     group_of = {n['id']: n['group'] for n in graph['nodes']}
     candidates = []
     for k, e in enumerate(entries):
@@ -41,5 +43,6 @@ def apply_names(graph):
 
 
 if __name__ == '__main__':
-    g = apply_names(json.loads(GRAPH.read_text(encoding='utf-8')))
+    GRAPH = DATA / (sys.argv[1] if len(sys.argv) > 1 else 'graph.json')
+    g = apply_names(json.loads(GRAPH.read_text(encoding='utf-8')), *sys.argv[2:3])
     GRAPH.write_text(json.dumps(g, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')

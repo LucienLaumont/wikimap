@@ -722,7 +722,9 @@
   // police du canvas : chargée explicitement, puis on redessine
   if (document.fonts) Promise.all([`${fonts.labelWeight} 14px ${fonts.display}`, `500 11.5px ${fonts.body}`].map((f) => document.fonts.load(f)))
     .then(() => { dirty = true; }, () => {});
-  fetch('data/graph.json').then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then((g) => {
+  // ?carte=75 charge data/graph-75.json (autre seuil d'acheteurs) ; sans paramètre, data/graph.json
+  const carte = (new URLSearchParams(location.search).get('carte') || '').match(/^\d+$/);
+  fetch(carte ? `data/graph-${carte[0]}.json` : 'data/graph.json').then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then((g) => {
     N = g.nodes; E = g.edges; GR = g.groups; layouts = g.layouts || {};
     const names = Object.keys(layouts);
     if (!names.length) throw new Error('aucune disposition calculée');

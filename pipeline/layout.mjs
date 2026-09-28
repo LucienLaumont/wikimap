@@ -2,10 +2,10 @@
  * layout.mjs — positions des cartes (ForceAtlas2) pour la map.
  *
  *   node pipeline/layout.mjs [--iterations 1000] [--scaling 2] [--gravity 25] [--spread 3] [--group-pull 3]
- *                       [--name principale]
+ *                       [--name principale] [--out graph.json]
  *   (depuis la racine, après pipeline/graph.py ; npm install dans pipeline/)
  *
- * Lit site/data/graph.json, y ajoute la disposition sous layouts[--name] (positions à plat
+ * Lit site/data/<--out> (graph.json par défaut), y ajoute la disposition sous layouts[--name] (positions à plat
  * [x0, y0, x1, y1, …]) et le rayon de chaque carte (size), et le réécrit. Plusieurs dispositions
  * peuvent coexister (la visionneuse passe de l'une à l'autre). LinLog + Barnes-Hut : les groupes de
  * cartes co-achetées se séparent nettement ; graine fixe, disposition reproductible.
@@ -22,7 +22,8 @@ const opt = (f, d) => { const i = argv.indexOf(f); return i >= 0 ? Number(argv[i
 const ITER = opt('--iterations', 1000);
 const SCALING = opt('--scaling', 2), GRAVITY = opt('--gravity', 25); // gravité 25 (« très serrée ») : carte 4,6 fois plus serrée qu'à 1, groupes aussi nets
 const NAME = argv.includes('--name') ? argv[argv.indexOf('--name') + 1] : 'principale';
-const FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'site', 'data', 'graph.json');
+const OUT = argv.includes('--out') ? argv[argv.indexOf('--out') + 1] : 'graph.json';
+const FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'site', 'data', OUT);
 
 const g = JSON.parse(readFileSync(FILE, 'utf8'));
 let seed = 42;
