@@ -39,7 +39,7 @@ compteurs.
 
 ```
 pipeline/   calcul : buyers.py → graph.py → layout.mjs (+ names.py, spread.py)
-site/       visionneuse statique (HTML, CSS, JS en canvas 2D, sans bibliothèque)
+site/       visionneuse statique (HTML, CSS, JS ; carte en WebGL 2, Canvas 2D en secours ; sans bibliothèque)
 data/       données locales, jamais versionnées (voir .gitignore)
 ```
 

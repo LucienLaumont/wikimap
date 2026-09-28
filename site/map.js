@@ -1,11 +1,24 @@
 // WikiMap — visionneuse de la carte des co-achats (données : data/graph.json, produit par
-// pipeline/graph.py puis pipeline/layout.mjs). Canvas 2D, sans bibliothèque.
+// pipeline/graph.py puis pipeline/layout.mjs). Carte dessinée en WebGL 2 (render-gl.js), étiquettes et
+// mise en avant en Canvas 2D ; sans WebGL 2, tout est dessiné en Canvas 2D (drawScene).
 (() => {
   const RARITIES = ['L', 'UR', 'SR', 'R', 'PC', 'C'];
   const SMALL = 5; // groupes plus petits : gris, sans nom ni zone sur la carte
   const NARROW = 640;
   const CURVE = 0.18; // courbure des liens : décalage du milieu, en part de leur longueur
-  const canvas = document.getElementById('map'), ctx = canvas.getContext('2d');
+  const ZONE_RES = 0.5; // résolution du calque des zones de groupe, en pixels par point d'écran (taches floues)
+  // Trois calques superposés : fond et grille (Canvas 2D) ; la carte (liens, zones, cartes), en WebGL ;
+  // l'écran (#map), qui reçoit les gestes et porte étiquettes, survol et sélection. Survoler une carte ne
+  // redessine que l'écran. Sans WebGL 2, la carte est dessinée en Canvas 2D sur sceneLayer puis recopiée.
+  const canvas = document.getElementById('map'), screen = canvas.getContext('2d');
+  const gridCanvas = document.createElement('canvas'), gridCtx = gridCanvas.getContext('2d'), glCanvas = document.createElement('canvas');
+  // placés ici plutôt que dans map.css : un ancien map.css gardé en cache les laisserait hors de la vue
+  for (const c of [gridCanvas, glCanvas]) Object.assign(c.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', display: 'block', pointerEvents: 'none' });
+  canvas.before(gridCanvas, glCanvas);
+  const glr = window.WikiGL ? WikiGL.create(glCanvas) : null;
+  let useGL = !!glr;
+  if (!useGL) glCanvas.remove();
+  let sceneLayer = document.createElement('canvas'), backLayer = document.createElement('canvas');
   const $ = (id) => document.getElementById(id);
   // séparateur de milliers : espace insécable ordinaire, Sora n'a pas l'espace fine du format français
   const nf = new Intl.NumberFormat('fr-FR'), fmt = { format: (n) => nf.format(n).replace(/ /g, ' ') };
@@ -16,7 +29,9 @@
 
   let N, E, interE, GR, adj, order, grid, gridSize = 400, sMax = 1, kMin = 0, layouts = {};
   let W = 0, H = 0, dpr = 1, cam = { x: 0, y: 0, k: 1 }, kFit = 1;
-  let hidden = new Set(), selected = -1, selGroup = -1, hover = -1, dirty = true;
+  // dirty : la scène est à refaire (données, filtres, sélection, thème) ; repaint : l'écran seul (survol)
+  let hidden = new Set(), selected = -1, selGroup = -1, hover = -1, dirty = true, repaint = false;
+  let shownCam = { x: NaN, y: NaN, k: NaN }, hl = null; // hl : mise en avant courante (highlight())
   let colorMode = 'group', colors = {}, groupCol = [], groupText = [], fonts = {}, detailGroup = -1;
   const zoneLayer = document.createElement('canvas'), zctx = zoneLayer.getContext('2d');
 
@@ -34,19 +49,37 @@
       groupCol = GR.map((g) => g.size < SMALL ? colors.small : `hsl(${hue(g)}, ${v('--group-s')}, ${v('--group-l')})`);
       groupText = GR.map((g) => g.size < SMALL ? colors.muted : `hsl(${hue(g)}, ${v('--group-s')}, ${v('--group-text-l')})`);
       if (detailGroup >= 0) $('detail').style.setProperty('--gcol', groupCol[detailGroup]);
+      if (glr) {
+        const rgba = new Uint8Array(GR.length * 4);
+        groupCol.forEach((c, k) => rgba.set([...rgb(c).map((v) => Math.round(v * 255)), 255], k * 4));
+        glr.setGroupColors(rgba, GR.length);
+      }
     }
+    glColors = { edge: rgb(`rgb(${colors.edge})`), accent: rgb(colors.accent), rar: new Float32Array(24) };
+    [...RARITIES, 'muted'].forEach((r, k) => glColors.rar.set(rgb(colors[r]), k * 3));
     syncThemeBtn();
     dirty = true;
   }
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readColors);
   new MutationObserver(readColors).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  // couleur CSS -> [r, g, b] entre 0 et 1 (le canvas normalise la couleur en #rrggbb ou rgba(...))
+  const cvt = document.createElement('canvas').getContext('2d');
+  function rgb(s) {
+    cvt.fillStyle = '#000'; cvt.fillStyle = s || '#000';
+    const v = cvt.fillStyle;
+    return v[0] === '#' ? [1, 3, 5].map((k) => parseInt(v.slice(k, k + 2), 16) / 255) : v.match(/[\d.]+/g).slice(0, 3).map((x) => +x / 255);
+  }
+  let glColors = null;
+  const rarIdx = (r) => { const k = RARITIES.indexOf(r); return k < 0 ? RARITIES.length : k; };
   const fillOf = (n) => colorMode === 'group' ? groupCol[n.group] : (colors[n.rarity] || colors.muted);
   const groupName = (g) => g.name || g.top.slice(0, 2).join(' · '); // nom (names.json) ou, à défaut, ses cartes phares
 
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = canvas.clientWidth; H = canvas.clientHeight;
-    canvas.width = zoneLayer.width = W * dpr; canvas.height = zoneLayer.height = H * dpr;
+    canvas.width = gridCanvas.width = sceneLayer.width = backLayer.width = W * dpr; canvas.height = gridCanvas.height = sceneLayer.height = backLayer.height = H * dpr;
+    if (glr) glr.resize(W, H, dpr, ZONE_RES);
+    zoneLayer.width = Math.ceil(W * ZONE_RES); zoneLayer.height = Math.ceil(H * ZONE_RES);
     dirty = true;
   }
   new ResizeObserver(resize).observe($('stage'));
@@ -62,6 +95,7 @@
   function setLayout(name) {
     const xy = layouts[name].xy;
     N.forEach((n, i) => { n.x = xy[2 * i]; n.y = xy[2 * i + 1]; });
+    if (glr) glr.setPositions(posArray());
     grid = new Map();
     N.forEach((n, i) => { const k = Math.floor(n.x / gridSize) + ',' + Math.floor(n.y / gridSize); (grid.get(k) || grid.set(k, []).get(k)).push(i); });
     GR.forEach((g) => { g.members = []; });
@@ -108,13 +142,34 @@
   }
 
   // ---- dessin
-  function draw() {
-    dirty = false;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = colors.bg; ctx.fillRect(0, 0, W, H);
-    graticule();
-    const on =(x, y) => x > -50 && x < W + 50 && y > -50 && y < H + 50;
-    // mise en avant : une carte (elle et ses voisines) ou un groupe (lui, puis ses groupes liés)
+  // Tracés groupés : un seul trait ou remplissage par couleur (et opacité, épaisseur), au lieu d'un
+  // par lien ou par carte. Le navigateur passe l'essentiel du temps à lancer les tracés, pas à les calculer.
+  const batch = (m, key, props) => { let b = m.get(key); if (!b) m.set(key, b = { path: new Path2D(), ...props }); return b.path; };
+  const textWidth = new Map(); // largeur des étiquettes, par police et texte : measureText est lent
+  // Étiquettes toutes faites : chaque texte (avec son contour couleur du fond) est dessiné une fois dans
+  // une petite image, puis recopié à chaque image ; dessiner du texte est lent, surtout sur écran haute
+  // résolution. Vidé au-delà de 4 000 (on a beaucoup zoomé et parcouru).
+  const labelCache = new Map(), LABEL_H = 24;
+  function labelSprite(text, font, color, halo, w) {
+    const key = dpr + '|' + font + '|' + color + '|' + halo + '|' + colors.bg + '|' + text;
+    let s = labelCache.get(key);
+    if (!s) {
+      if (labelCache.size > 4000) labelCache.clear();
+      const pad = Math.ceil(halo) + 2;
+      s = document.createElement('canvas');
+      s.width = Math.ceil((w + 2 * pad) * dpr); s.height = Math.ceil(LABEL_H * dpr);
+      const c = s.getContext('2d');
+      c.scale(dpr, dpr); c.font = font; c.textBaseline = 'middle'; c.lineJoin = 'round';
+      c.lineWidth = halo; c.strokeStyle = colors.bg; c.strokeText(text, pad, LABEL_H / 2);
+      c.fillStyle = color; c.fillText(text, pad, LABEL_H / 2);
+      s.pad = pad;
+      labelCache.set(key, s);
+    }
+    return s;
+  }
+
+  // mise en avant : une carte (elle et ses voisines) ou un groupe (lui, puis ses groupes liés)
+  function highlight() {
     const nbSet = selected >= 0 ? new Set(adj[selected].map((a) => a[0])) : null;
     const linked = selGroup >= 0 ? new Set(Object.keys(GR[selGroup].links).map(Number)) : null;
     const alphaOf = (i) => {
@@ -123,47 +178,72 @@
       if (linked) return n.group === selGroup ? base : linked.has(n.group) ? 0.4 : 0.07;
       return base;
     };
+    return { nbSet, linked, alphaOf };
+  }
+  // fonctions de position pour une caméra jc
+  const viewOf = (jc) => ({
+    sx: (x) => (x - jc.x) * jc.k + W / 2, sy: (y) => (y - jc.y) * jc.k + H / 2,
+    radius: (n) => n.size * Math.max(jc.k, kMin), on: (x, y) => x > -50 && x < W + 50 && y > -50 && y < H + 50,
+  });
+
+  // Sans WebGL : dessine la carte pour la caméra jc sur ctx, en Canvas 2D, étiquettes comprises
+  function drawScene(jc, ctx, { nbSet, linked, alphaOf }) {
+    const { sx, sy, radius, on } = viewOf(jc);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
 
     // Liens en arc léger (courbe quadratique), toujours bombés du même côté pour qu'un faisceau de
     // liens parallèles reste rangé. Ordre de dessin : liens, puis zones de groupe par-dessus (les
     // groupes dominent), puis ce qui est sélectionné, puis les cartes.
-    const arc = (x1, y1, x2, y2) => {
+    const arc = (p, x1, y1, x2, y2) => {
       const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-      ctx.moveTo(x1, y1); ctx.quadraticCurveTo(mx - (y2 - y1) * CURVE, my + (x2 - x1) * CURVE, x2, y2);
+      p.moveTo(x1, y1); p.quadraticCurveTo(mx - (y2 - y1) * CURVE, my + (x2 - x1) * CURVE, x2, y2);
     };
     const offscreen = (x1, y1, x2, y2) => Math.max(x1, x2) < -40 || Math.min(x1, x2) > W + 40 || Math.max(y1, y2) < -40 || Math.min(y1, y2) > H + 40;
-    // liens entre groupes (~3 %) : dégradé de la couleur d'un groupe vers celle de l'autre
+    // liens entre groupes : coupés en leur milieu, chaque moitié à la couleur du groupe de son bout (le
+    // dégradé d'un groupe à l'autre, sans un dégradé par lien) ; épaisseur arrondie au demi-pixel
     const interLinks = (only, alpha, width) => {
+      const paths = new Map();
       for (const [a, b, w] of interE) {
         const ga = N[a].group, gb = N[b].group;
         if (only >= 0 && ga !== only && gb !== only) continue;
         if (!visible(a) || !visible(b)) continue;
         const x1 = sx(N[a].x), y1 = sy(N[a].y), x2 = sx(N[b].x), y2 = sy(N[b].y);
         if (offscreen(x1, y1, x2, y2)) continue;
-        const grad = ctx.createLinearGradient(x1, y1, x2, y2);
-        grad.addColorStop(0, groupCol[ga]); grad.addColorStop(1, groupCol[gb]);
-        ctx.strokeStyle = grad; ctx.lineWidth = width(w); ctx.globalAlpha = alpha;
-        ctx.beginPath(); arc(x1, y1, x2, y2); ctx.stroke();
+        const qx = (x1 + x2) / 2 - (y2 - y1) * CURVE, qy = (y1 + y2) / 2 + (x2 - x1) * CURVE;
+        const hx = (x1 + 2 * qx + x2) / 4, hy = (y1 + 2 * qy + y2) / 4; // milieu de la courbe
+        const lw = Math.max(1, Math.round(width(w) * 2));
+        const straight = Math.abs(x2 - x1) + Math.abs(y2 - y1) < 24;
+        let p = batch(paths, ga * 16 + lw, { g: ga, lw });
+        p.moveTo(x1, y1); straight ? p.lineTo(hx, hy) : p.quadraticCurveTo((x1 + qx) / 2, (y1 + qy) / 2, hx, hy);
+        p = batch(paths, gb * 16 + lw, { g: gb, lw });
+        p.moveTo(hx, hy); straight ? p.lineTo(x2, y2) : p.quadraticCurveTo((qx + x2) / 2, (qy + y2) / 2, x2, y2);
       }
+      ctx.globalAlpha = alpha;
+      for (const { path, g, lw } of paths.values()) { ctx.strokeStyle = groupCol[g]; ctx.lineWidth = lw / 2; ctx.stroke(path); }
       ctx.globalAlpha = 1;
     };
 
-    // liens internes aux groupes : gris, discrets, tous affichés
+    // liens internes aux groupes : gris, discrets, tous affichés ; ceux de moins de 3 px à l'écran (vue
+    // d'ensemble) se perdent sous les zones, les courts sont tracés droits (la courbure ne se voit pas)
     ctx.lineWidth = 0.5;
     ctx.strokeStyle = `rgba(${colors.edge},${nbSet || linked ? colors.edgeAlpha * 0.4 : colors.edgeAlpha})`;
-    ctx.beginPath();
+    const intra = new Path2D();
     for (const [a, b] of E) {
       if (N[a].group !== N[b].group || !visible(a) || !visible(b)) continue;
       const x1 = sx(N[a].x), y1 = sy(N[a].y), x2 = sx(N[b].x), y2 = sy(N[b].y);
       if (offscreen(x1, y1, x2, y2)) continue;
-      arc(x1, y1, x2, y2);
+      const len = Math.abs(x2 - x1) + Math.abs(y2 - y1);
+      if (len < 3) continue;
+      if (len < 12) { intra.moveTo(x1, y1); intra.lineTo(x2, y2); } else arc(intra, x1, y1, x2, y2);
     }
-    ctx.stroke();
+    ctx.stroke(intra);
     if (!nbSet && !linked) interLinks(-1, colors.linkAlpha, (w) => 0.5 + w * 2.5);
 
     // zones de groupe (« flaques ») : un disque large sous chaque carte, dessiné opaque sur un calque
-    // à part puis posé en transparence ; les disques voisins se fondent en une seule zone
-    zctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // à part (à demi-résolution : ses bords sont doux) puis posé en transparence ; les disques voisins
+    // se fondent en une seule zone
+    zctx.setTransform(ZONE_RES, 0, 0, ZONE_RES, 0, 0);
     zctx.clearRect(0, 0, W, H);
     for (const g of GR) {
       if (g.size < SMALL || (linked && g.id !== selGroup && !linked.has(g.id))) continue;
@@ -189,49 +269,68 @@
       for (const [j, w] of adj[selected]) {
         if (!visible(j)) continue;
         ctx.lineWidth = 0.8 + w * 5;
-        ctx.beginPath(); arc(x0, y0, sx(N[j].x), sy(N[j].y)); ctx.stroke();
+        ctx.beginPath(); arc(ctx, x0, y0, sx(N[j].x), sy(N[j].y)); ctx.stroke();
       }
       ctx.globalAlpha = 1;
     }
 
-    // cartes ; en mode groupe, la rareté est un anneau dès que le point est assez grand
+    // cartes, par lots de même couleur et même opacité (arrondie au 1/20) : halos (thème sombre),
+    // disques, puis anneaux de rareté en mode groupe, dès que le point est assez grand
+    const glows = new Map(), fills = new Map(), rings = new Map(), TAU = Math.PI * 2;
     for (const i of order) {
       if (!visible(i)) continue;
       const n = N[i], x = sx(n.x), y = sy(n.y);
       if (!on(x, y)) continue;
-      const r = radius(n), a = alphaOf(i);
-      ctx.fillStyle = fillOf(n);
+      const r = radius(n), a = Math.round(alphaOf(i) * 20) / 20, col = fillOf(n);
       // thème sombre : halo autour des cartes centrales, comme des étoiles
       if (colors.glow && r >= 2.5 && n.strength >= sMax * 0.5) {
-        ctx.globalAlpha = a * colors.glow * 0.5; ctx.beginPath(); ctx.arc(x, y, r * 2.4, 0, Math.PI * 2); ctx.fill();
-        ctx.globalAlpha = a * colors.glow; ctx.beginPath(); ctx.arc(x, y, r * 1.6, 0, Math.PI * 2); ctx.fill();
+        let p = batch(glows, col + '|' + a * colors.glow * 0.5, { col, a: a * colors.glow * 0.5 });
+        p.moveTo(x + r * 2.4, y); p.arc(x, y, r * 2.4, 0, TAU);
+        p = batch(glows, col + '|' + a * colors.glow, { col, a: a * colors.glow });
+        p.moveTo(x + r * 1.6, y); p.arc(x, y, r * 1.6, 0, TAU);
       }
-      ctx.globalAlpha = a;
-      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      const p = batch(fills, col + '|' + a, { col, a });
+      if (r < 1.5) p.rect(x - r * 0.9, y - r * 0.9, r * 1.8, r * 1.8); // tout petit : un carré de même surface visible
+      else { p.moveTo(x + r, y); p.arc(x, y, r, 0, TAU); }
       if (colorMode === 'group' && r >= 3.5) {
-        const lw = Math.max(1, r * 0.3);
-        ctx.strokeStyle = colors[n.rarity] || colors.muted; ctx.lineWidth = lw;
-        ctx.beginPath(); ctx.arc(x, y, r - lw / 2, 0, Math.PI * 2); ctx.stroke();
+        const lw = Math.max(1, Math.round(r * 0.6) / 2), rc = colors[n.rarity] || colors.muted;
+        const q = batch(rings, rc + '|' + a + '|' + lw, { col: rc, a, lw });
+        q.moveTo(x + r - lw / 2, y); q.arc(x, y, r - lw / 2, 0, TAU);
       }
     }
+    for (const { path, col, a } of glows.values()) { ctx.globalAlpha = a; ctx.fillStyle = col; ctx.fill(path); }
+    for (const { path, col, a } of fills.values()) { ctx.globalAlpha = a; ctx.fillStyle = col; ctx.fill(path); }
+    for (const { path, col, a, lw } of rings.values()) { ctx.globalAlpha = a; ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.stroke(path); }
     ctx.globalAlpha = 1;
-    if (selected >= 0) brackets(selected);
-    if (hover >= 0 && hover !== selected) ring(hover, colors.ink, 1.5);
+    drawLabels(ctx, jc, { nbSet, linked, alphaOf });
+  }
 
-    // étiquettes, sans chevauchement : noms de groupes vue de loin, noms de cartes en zoomant
-    const placed = [], zoom = cam.k / kFit;
-    const put = (text, x, y, font, color, anchor, spacing = '0px', halo = 3.5) => {
-      ctx.font = font; ctx.letterSpacing = spacing;
-      const w = ctx.measureText(text).width, x0 = anchor === 'center' ? x - w / 2 : x;
+  // étiquettes, sans chevauchement : noms de groupes vue de loin, noms de cartes en zoomant ; les
+  // boîtes déjà posées sont rangées dans une grille de 64 px pour ne comparer qu'aux voisines
+  function drawLabels(ctx, jc, { nbSet, linked, alphaOf }) {
+    const { sx, sy, radius, on } = viewOf(jc);
+    const CELL = 64, cells = new Map(), zoom = jc.k / kFit;
+    const eachCell = (b, fn) => {
+      for (let gx = Math.floor(b[0] / CELL); gx <= Math.floor(b[2] / CELL); gx++)
+        for (let gy = Math.floor(b[1] / CELL); gy <= Math.floor(b[3] / CELL); gy++) if (fn(gx + ',' + gy)) return true;
+      return false;
+    };
+    const put = (text, x, y, font, color, anchor, halo = 3.5) => {
+      const tk = font + '\n' + text;
+      let w = textWidth.get(tk);
+      if (w === undefined) { ctx.font = font; w = ctx.measureText(text).width; textWidth.set(tk, w); }
+      const x0 = anchor === 'center' ? x - w / 2 : x;
       const box = [x0 - 3, y - 9, x0 + w + 3, y + 9];
       if (box[2] < 0 || box[0] > W || box[3] < 0 || box[1] > H) return false;
-      if (placed.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) return false;
-      placed.push(box);
-      ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
-      ctx.lineWidth = halo; ctx.strokeStyle = colors.bg; ctx.strokeText(text, x0, y);
-      ctx.fillStyle = color; ctx.fillText(text, x0, y);
+      if (eachCell(box, (k) => (cells.get(k) || []).some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1]))) return false;
+      eachCell(box, (k) => { (cells.get(k) || cells.set(k, []).get(k)).push(box); });
+      // recopiée pixel pour pixel (taille exacte, position calée sur la grille des pixels réels) :
+      // la moindre mise à l'échelle ou position entre deux pixels rendrait le texte flou
+      const s = labelSprite(text, font, color, halo, w);
+      ctx.drawImage(s, Math.round((x0 - s.pad) * dpr) / dpr, Math.round((y - LABEL_H / 2) * dpr) / dpr, s.width / dpr, s.height / dpr);
       return true;
     };
+    ctx.letterSpacing = '0px';
     const cut = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
     const cardFont = `500 11.5px ${fonts.body}`;
     if (nbSet) {
@@ -242,20 +341,65 @@
       // si la place est prise au cœur du groupe, on essaie juste au-dessus puis juste en dessous
       const gs = GR.filter((g) => g.size >= SMALL && (!linked || g.id === selGroup || linked.has(g.id)));
       for (const g of gs) {
+        const x = sx(g.cx), y = sy(g.cy);
+        if (x < -300 || x > W + 300 || y < -40 || y > H + 40) continue;
         const size = 11.5 + Math.min(4, Math.log2(g.size / SMALL)), font = `${fonts.labelWeight} ${size.toFixed(1)}px ${fonts.display}`;
-        for (const dy of [0, -18, 18]) if (put(cut(groupName(g), 40), sx(g.cx), sy(g.cy) + dy, font, groupText[g.id], 'center', '0px', fonts.labelHalo)) break;
+        for (const dy of [0, -18, 18]) if (put(cut(groupName(g), 40), x, y + dy, font, groupText[g.id], 'center', fonts.labelHalo)) break;
       }
       if (zoom >= 2) {
         const maxLabels = Math.min(400, Math.round(10 * zoom * zoom));
         let n = 0;
         for (let k = order.length - 1; k >= 0 && n < maxLabels; k--) {
-          const i = order[k];
+            const i = order[k];
           if (!visible(i) || (linked && alphaOf(i) < 0.3)) continue;
-          if (put(cut(N[i].label, 34), sx(N[i].x) + radius(N[i]) + 4, sy(N[i].y), cardFont, colors.ink)) n++;
+          const x = sx(N[i].x), y = sy(N[i].y);
+          if (!on(x, y)) continue;
+          if (put(cut(N[i].label, 34), x + radius(N[i]) + 4, y, cardFont, colors.ink)) n++;
         }
       }
     }
   }
+
+  // L'écran : fond et grille (calque du dessous), puis, sur #map, les étiquettes (WebGL) ou la carte
+  // dessinée en Canvas 2D, et enfin la sélection et le survol.
+  function paint() {
+    repaint = false; shownCam = { ...cam };
+    gridCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    gridCtx.fillStyle = colors.bg; gridCtx.fillRect(0, 0, W, H);
+    graticule();
+    screen.setTransform(dpr, 0, 0, dpr, 0, 0);
+    screen.clearRect(0, 0, W, H);
+    if (useGL) drawLabels(screen, cam, hl);
+    else screen.drawImage(sceneLayer, 0, 0, W, H);
+    if (selected >= 0) brackets(selected);
+    if (hover >= 0 && hover !== selected) ring(hover, colors.ink, 1.5);
+  }
+
+  // WebGL : état (opacité, groupe, rareté, drapeaux de chaque carte ; liens mis en avant) et réglages
+  const flat = (es) => { const f = new Float32Array(es.length * 3); es.forEach(([a, b, w], k) => { f[3 * k] = a; f[3 * k + 1] = b; f[3 * k + 2] = w; }); return f; };
+  const posArray = () => { const f = new Float32Array(N.length * 4); N.forEach((n, i) => f.set([n.x || 0, n.y || 0, n.size, n.strength], i * 4)); return f; };
+  function pushState() {
+    const { linked, alphaOf } = hl, attr = new Float32Array(N.length * 4);
+    N.forEach((n, i) => {
+      const g = GR[n.group], zone = g.size >= SMALL && (!linked || g.id === selGroup || linked.has(g.id));
+      attr[4 * i] = alphaOf(i); attr[4 * i + 1] = n.group; attr[4 * i + 2] = rarIdx(n.rarity);
+      attr[4 * i + 3] = (visible(i) ? 1 : 0) | (zone ? 2 : 0);
+    });
+    const hiGroup = selGroup >= 0 ? interE.filter(([a, b]) => N[a].group === selGroup || N[b].group === selGroup) : [];
+    const hiCard = selected >= 0 ? adj[selected].map(([j, w]) => [selected, j, w]) : [];
+    glr.setState(attr, flat(hiGroup), flat(hiCard));
+  }
+  function glOptions() {
+    const { nbSet, linked } = hl, fine = cam.k / kFit >= 2; // en zoomant, des courbes plus fines
+    return {
+      kMin, curve: CURVE, edge: glColors.edge, accent: glColors.accent, rar: glColors.rar,
+      intraAlpha: nbSet || linked ? colors.edgeAlpha * 0.4 : colors.edgeAlpha, showInter: !nbSet && !linked,
+      linkAlpha: colors.linkAlpha, zoneAlpha: nbSet ? colors.zoneAlpha * 0.5 : colors.zoneAlpha,
+      intraSeg: fine ? 8 : 3, interSeg: fine ? 10 : 6,
+      colorMode: colorMode === 'group' ? 0 : 1, ring: colorMode === 'group' ? 1 : 0, glow: colors.glow, glowMin: sMax * 0.5,
+    };
+  }
+
   // Grille fixée à la carte (elle suit zoom et déplacement), pas de 1, 2 ou 5 × 10ⁿ choisi pour garder
   // ~110 px entre deux lignes : un point à chaque croisement, une ligne sur cinq tracée avec une croix
   // aux croisements de ces lignes, et des graduations sur les bords de l'écran.
@@ -265,43 +409,56 @@
     const xs = [], ys = [];
     for (let v = Math.ceil((cam.x - W / 2 / cam.k) / step); v * step <= cam.x + W / 2 / cam.k; v++) xs.push([Math.round(sx(v * step)) + 0.5, v % 5 === 0]);
     for (let v = Math.ceil((cam.y - H / 2 / cam.k) / step); v * step <= cam.y + H / 2 / cam.k; v++) ys.push([Math.round(sy(v * step)) + 0.5, v % 5 === 0]);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = `rgba(${colors.grat},${colors.gratAlpha})`; ctx.beginPath();
-    for (const [x, mj] of xs) if (mj) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
-    for (const [y, mj] of ys) if (mj) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
-    ctx.stroke();
-    ctx.fillStyle = `rgba(${colors.grat},${colors.gratAlpha * 2.2})`;
-    for (const [x] of xs) for (const [y] of ys) ctx.fillRect(x - 1, y - 1, 1.5, 1.5);
-    ctx.strokeStyle = `rgba(${colors.grat},${colors.gratAlpha * 4})`; ctx.beginPath();
-    for (const [x, mx] of xs) for (const [y, my] of ys) if (mx && my) { ctx.moveTo(x - 5, y); ctx.lineTo(x + 5, y); ctx.moveTo(x, y - 5); ctx.lineTo(x, y + 5); }
-    ctx.stroke();
-    ctx.strokeStyle = `rgba(${colors.grat},${Math.min(1, colors.gratAlpha * 4)})`;
-    ctx.beginPath();
-    for (const [x, mj] of xs) { const t = mj ? 9 : 4; ctx.moveTo(x, 0); ctx.lineTo(x, t); ctx.moveTo(x, H); ctx.lineTo(x, H - t); }
-    for (const [y, mj] of ys) { const t = mj ? 9 : 4; ctx.moveTo(0, y); ctx.lineTo(t, y); ctx.moveTo(W, y); ctx.lineTo(W - t, y); }
-    ctx.stroke();
+    gridCtx.lineWidth = 1;
+    gridCtx.strokeStyle = `rgba(${colors.grat},${colors.gratAlpha})`; gridCtx.beginPath();
+    for (const [x, mj] of xs) if (mj) { gridCtx.moveTo(x, 0); gridCtx.lineTo(x, H); }
+    for (const [y, mj] of ys) if (mj) { gridCtx.moveTo(0, y); gridCtx.lineTo(W, y); }
+    gridCtx.stroke();
+    gridCtx.fillStyle = `rgba(${colors.grat},${colors.gratAlpha * 2.2})`;
+    for (const [x] of xs) for (const [y] of ys) gridCtx.fillRect(x - 1, y - 1, 1.5, 1.5);
+    gridCtx.strokeStyle = `rgba(${colors.grat},${colors.gratAlpha * 4})`; gridCtx.beginPath();
+    for (const [x, mx] of xs) for (const [y, my] of ys) if (mx && my) { gridCtx.moveTo(x - 5, y); gridCtx.lineTo(x + 5, y); gridCtx.moveTo(x, y - 5); gridCtx.lineTo(x, y + 5); }
+    gridCtx.stroke();
+    gridCtx.strokeStyle = `rgba(${colors.grat},${Math.min(1, colors.gratAlpha * 4)})`;
+    gridCtx.beginPath();
+    for (const [x, mj] of xs) { const t = mj ? 9 : 4; gridCtx.moveTo(x, 0); gridCtx.lineTo(x, t); gridCtx.moveTo(x, H); gridCtx.lineTo(x, H - t); }
+    for (const [y, mj] of ys) { const t = mj ? 9 : 4; gridCtx.moveTo(0, y); gridCtx.lineTo(t, y); gridCtx.moveTo(W, y); gridCtx.lineTo(W - t, y); }
+    gridCtx.stroke();
   }
   // carte choisie : crochets de visée et cercle pointillé ; sur grand écran, un pointillé la relie à sa fiche
   function brackets(i) {
     const n = N[i], x = sx(n.x), y = sy(n.y), d = radius(n) + 7, l = 5;
-    ctx.strokeStyle = colors.accent; ctx.lineWidth = 1.5; ctx.beginPath();
-    for (const [ax, ay] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { ctx.moveTo(x + ax * d, y + ay * (d - l)); ctx.lineTo(x + ax * d, y + ay * d); ctx.lineTo(x + ax * (d - l), y + ay * d); }
-    ctx.stroke();
-    ctx.lineWidth = 1; ctx.setLineDash([2, 3]); ctx.globalAlpha = 0.45;
-    ctx.beginPath(); ctx.arc(x, y, d + 6, 0, Math.PI * 2); ctx.stroke();
+    screen.strokeStyle = colors.accent; screen.lineWidth = 1.5; screen.beginPath();
+    for (const [ax, ay] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { screen.moveTo(x + ax * d, y + ay * (d - l)); screen.lineTo(x + ax * d, y + ay * d); screen.lineTo(x + ax * (d - l), y + ay * d); }
+    screen.stroke();
+    screen.lineWidth = 1; screen.setLineDash([2, 3]); screen.globalAlpha = 0.45;
+    screen.beginPath(); screen.arc(x, y, d + 6, 0, Math.PI * 2); screen.stroke();
     const det = $('detail');
     if (W >= NARROW && !det.hidden) {
       const px = det.getBoundingClientRect().left - canvas.getBoundingClientRect().left;
-      if (px > x + d + 12) { ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(x + d + 8, y); ctx.lineTo(px, y); ctx.stroke(); }
+      if (px > x + d + 12) { screen.setLineDash([4, 4]); screen.beginPath(); screen.moveTo(x + d + 8, y); screen.lineTo(px, y); screen.stroke(); }
     }
-    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    screen.setLineDash([]); screen.globalAlpha = 1;
   }
   function ring(i, color, width) {
     const n = N[i];
-    ctx.strokeStyle = color; ctx.lineWidth = width;
-    ctx.beginPath(); ctx.arc(sx(n.x), sy(n.y), radius(n) + 3, 0, Math.PI * 2); ctx.stroke();
+    screen.strokeStyle = color; screen.lineWidth = width;
+    screen.beginPath(); screen.arc(sx(n.x), sy(n.y), radius(n) + 3, 0, Math.PI * 2); screen.stroke();
   }
-  function loop() { if (dirty) draw(); requestAnimationFrame(loop); }
+  // À chaque image : la carte est redessinée entièrement, nette, dès que l'état ou la caméra a changé
+  // (WebGL : quelques millisecondes) ; le survol seul ne refait que l'écran.
+  function loop() {
+    if (useGL && glr.lost()) { useGL = false; glCanvas.remove(); dirty = true; } // carte graphique perdue : Canvas 2D
+    let redraw = cam.x !== shownCam.x || cam.y !== shownCam.y || cam.k !== shownCam.k;
+    if (dirty) { dirty = false; hl = highlight(); if (useGL) pushState(); redraw = true; }
+    if (redraw) {
+      if (useGL) glr.render(cam, glOptions());
+      else { drawScene({ ...cam }, backLayer.getContext('2d'), hl); [sceneLayer, backLayer] = [backLayer, sceneLayer]; }
+      repaint = true;
+    }
+    if (repaint) paint();
+    requestAnimationFrame(loop);
+  }
 
   // ---- navigation
   let drag = null, pinch = null, moved = false;
@@ -318,15 +475,15 @@
     if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pinch && pointers.size === 2) {
       const [p, q] = [...pointers.values()];
-      cam.k = clampK(pinch.k * Math.hypot(p.x - q.x, p.y - q.y) / pinch.d); moved = true; dirty = true; return;
+      cam.k = clampK(pinch.k * Math.hypot(p.x - q.x, p.y - q.y) / pinch.d); moved = true; return;
     }
     if (drag) {
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) { moved = true; canvas.classList.add('dragging'); }
-      cam.x = drag.cx - dx / cam.k; cam.y = drag.cy - dy / cam.k; dirty = true; hideTip(); return;
+      cam.x = drag.cx - dx / cam.k; cam.y = drag.cy - dy / cam.k; hideTip(); return;
     }
     const [px, py] = local(e), h = pick(px, py);
-    if (h !== hover) { hover = h; dirty = true; canvas.classList.toggle('over', h >= 0); }
+    if (h !== hover) { hover = h; repaint = true; canvas.classList.toggle('over', h >= 0); }
     h >= 0 ? showTip(h, e.clientX, e.clientY) : hideTip();
   });
   const up = (e) => {
@@ -338,12 +495,12 @@
   };
   canvas.addEventListener('pointerup', up);
   canvas.addEventListener('pointercancel', up);
-  canvas.addEventListener('pointerleave', () => { hover = -1; hideTip(); dirty = true; });
+  canvas.addEventListener('pointerleave', () => { hover = -1; hideTip(); repaint = true; });
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const [px, py] = local(e), k = clampK(cam.k * Math.exp(-e.deltaY * 0.0015));
     const wx = (px - W / 2) / cam.k + cam.x, wy = (py - H / 2) / cam.k + cam.y;
-    cam.k = k; cam.x = wx - (px - W / 2) / k; cam.y = wy - (py - H / 2) / k; dirty = true;
+    cam.k = k; cam.x = wx - (px - W / 2) / k; cam.y = wy - (py - H / 2) / k;
   }, { passive: false });
 
   function animateTo(x1, y1, k1, offset = true) {
@@ -353,7 +510,7 @@
     const off = offset && W >= NARROW ? 180 / k1 : 0, offY = offset && W < NARROW ? H * 0.28 / k1 : 0;
     (function step(t) {
       const p = dur ? Math.min(1, (t - t0) / dur) : 1, e = 1 - Math.pow(1 - p, 3);
-      cam.x = x0 + (x1 + off - x0) * e; cam.y = y0 + (y1 + offY - y0) * e; cam.k = k0 + (k1 - k0) * e; dirty = true;
+      cam.x = x0 + (x1 + off - x0) * e; cam.y = y0 + (y1 + offY - y0) * e; cam.k = k0 + (k1 - k0) * e;
       if (p < 1) requestAnimationFrame(step);
     })(t0);
   }
@@ -722,7 +879,7 @@
   // police du canvas : chargée explicitement, puis on redessine
   if (document.fonts) Promise.all([`${fonts.labelWeight} 14px ${fonts.display}`, `500 11.5px ${fonts.body}`].map((f) => document.fonts.load(f)))
     .then(() => { dirty = true; }, () => {});
-  // ?carte=75 charge data/graph-75.json (autre seuil d'acheteurs) ; sans paramètre, data/graph.json
+  // ?carte=50 charge data/graph-50.json (autre seuil d'acheteurs) ; sans paramètre, data/graph.json
   const carte = (new URLSearchParams(location.search).get('carte') || '').match(/^\d+$/);
   fetch(carte ? `data/graph-${carte[0]}.json` : 'data/graph.json').then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then((g) => {
     N = g.nodes; E = g.edges; GR = g.groups; layouts = g.layouts || {};
@@ -736,6 +893,7 @@
     order = N.map((_, i) => i).sort((a, b) => N[a].strength - N[b].strength); // faibles d'abord, centrales dessus
     sMax = N[order[Math.floor(order.length * 0.9)]].strength;
     kMin = 1.4 / N.map((n) => n.size).sort((a, b) => a - b)[N.length >> 1];
+    if (glr) glr.setGraph(N.length, posArray(), Float32Array.from(order), flat(E.filter(([a, b]) => N[a].group === N[b].group)), flat(interE));
     readColors();
 
     const counts = {};
@@ -766,7 +924,7 @@
     }
     footer(g);
     setLayout(names[0]);
-    $('status').hidden = true; loop();
+    $('status').hidden = true; requestAnimationFrame(loop);
     fromHash(); // lien partagé : ouvre directement la carte ou le groupe
   }).catch((err) => {
     $('status').textContent = `La carte n'a pas pu être chargée (${err.message}).`;
