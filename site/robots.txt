@@ -1,2 +1,4 @@
 User-agent: *
-Disallow: /
+Allow: /
+
+Sitemap: https://wikimap.laumontlucien.workers.dev/sitemap.xml
