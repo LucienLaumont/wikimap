@@ -243,6 +243,8 @@ dialog h2 { margin: 0 0 16px; padding: 0 36px 14px 0; border-bottom: 1px solid v
 .method h3:first-child { margin-top: 0; }
 .method p, .method li { margin: 0; max-width: 62ch; }
 .method ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.method a { color: var(--accent); text-decoration: none; }
+.method a:hover { text-decoration: underline; }
 
 /* ---- écrans étroits et téléphone */
 @media (max-width: 1100px) {

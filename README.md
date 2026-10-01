@@ -6,6 +6,8 @@ sport, un parti…), et les liens de co-achat entre eux.
 
 Projet indépendant, non affilié à WikiMasters.
 
+Contact : [laumontlucien@gmail.com](mailto:laumontlucien@gmail.com) (questions, remarques, demande de retrait).
+
 ## Ce que montre la carte
 
 - **Un point, c'est une carte**, achetée aux enchères par au moins 50 collectionneurs différents.
